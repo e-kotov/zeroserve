@@ -9,3 +9,6 @@
 ^\.gemini/
 ^conductor/.*
 ^R_drafts/.*
+^_pkgdown\.yml$
+^docs$
+^pkgdown$
