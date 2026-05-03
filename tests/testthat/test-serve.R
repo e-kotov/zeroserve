@@ -82,6 +82,8 @@ test_that("zs_serve_arrow handles standard data.frame (non-spatial)", {
 test_that("zs_serve_arrow handles empty sf object", {
   skip_if_not_installed("httpuv")
   skip_if_not_installed("curl")
+  skip_if_not_installed("nanoarrow")
+  skip_if_not_installed("sf")
   
   nc <- sf::st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
   nc_empty <- nc[0, ]
@@ -92,11 +94,21 @@ test_that("zs_serve_arrow handles empty sf object", {
   temp_out <- tempfile(fileext = ".arrow")
   curl::curl_download(url, temp_out, quiet = TRUE)
   expect_true(file.size(temp_out) > 0)
+  
+  # Verify schema matches original even if empty
+  stream <- nanoarrow::read_nanoarrow(temp_out)
+  schema <- stream$get_schema()
+  expect_true("geometry" %in% names(schema$children))
+  
+  res <- as.data.frame(stream)
+  expect_equal(nrow(res), 0)
+  expect_true("geometry" %in% names(res))
 })
 
 test_that("zs_serve_parquet handles non-spatial DuckDB table", {
   skip_if_not_installed("duckdb")
   skip_if_not_installed("curl")
+  skip_if_not_installed("arrow")
   
   con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
@@ -109,7 +121,11 @@ test_that("zs_serve_parquet handles non-spatial DuckDB table", {
   
   temp_out <- tempfile(fileext = ".parquet")
   curl::curl_download(url, temp_out, quiet = TRUE)
-  expect_true(file.size(temp_out) > 0)
+  
+  # Verify content
+  res <- arrow::read_parquet(temp_out)
+  expect_equal(nrow(res), 5)
+  expect_equal(res$a, 1:5)
 })
 
 test_that("zs_serve_parquet throws error on invalid SQL", {
@@ -232,6 +248,8 @@ test_that("zs_serve_parquet supports HTTP Range requests", {
 test_that("zs_serve_parquet returns a valid streaming URL (spatial)", {
   skip_if_not_installed("duckdb")
   skip_if_not_installed("curl")
+  skip_if_not_installed("sf")
+  skip_if_not_installed("arrow")
   
   nc <- sf::st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
   nc <- nc[1:5, ]
@@ -255,6 +273,70 @@ test_that("zs_serve_parquet returns a valid streaming URL (spatial)", {
   temp_out <- tempfile(fileext = ".parquet")
   curl::curl_download(url, temp_out, quiet = TRUE)
   expect_true(file.size(temp_out) > 0)
+  
+  # Verify spatial content
+  res <- arrow::read_parquet(temp_out)
+  expect_true("geometry" %in% names(res))
+  expect_equal(nrow(res), 5)
+  
+  # Check if we can convert back to sf. 
+  # DuckDB might not write GeoParquet metadata, so CRS might be NA.
+  # But coordinates should be in 4326 range (approx -84 to -75 for NC)
+  res_sfc <- sf::st_as_sfc(res$geometry)
+  bbox <- sf::st_bbox(res_sfc)
+  expect_true(bbox$xmin < 0 && bbox$xmin > -100)
+  expect_true(bbox$ymin > 0 && bbox$ymin < 50)
+})
+
+test_that("zs_serve_file throws error if file does not exist", {
+  expect_error(zs_serve_file("non_existent_file.txt"))
+})
+
+test_that("zs_serve_parquet handles geom column (not geometry) with duckdb engine", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("sf")
+  
+  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbExecute(con, "INSTALL spatial; LOAD spatial;")
+  
+  # Create table with 'geom' instead of 'geometry'
+  DBI::dbExecute(con, "CREATE TABLE test_geom AS SELECT ST_GeomFromText('POINT(0 0)') AS geom")
+  
+  url <- zs_serve_parquet(con, "test_geom", engine = "duckdb", layer_id = "test_geom")
+  expect_match(url, "test_geom\\.parquet$")
+  
+  temp_out <- tempfile(fileext = ".parquet")
+  curl::curl_download(url, temp_out, quiet = TRUE)
+  expect_true(file.size(temp_out) > 0)
+})
+
+test_that("zs_serve_parquet handles CRS as number and crs object", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("sf")
+  skip_if_not_installed("arrow")
+  
+  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbExecute(con, "INSTALL spatial; LOAD spatial;")
+  
+  DBI::dbExecute(con, "CREATE TABLE test_crs AS SELECT ST_GeomFromText('POINT(0 0)') AS geometry")
+  
+  # CRS as number (4326)
+  url1 <- zs_serve_parquet(con, "test_crs", engine = "duckdb", layer_id = "test_crs_num", crs = 4326)
+  expect_match(url1, "test_crs_num\\.parquet$")
+  temp1 <- tempfile(fileext = ".parquet")
+  curl::curl_download(url1, temp1, quiet = TRUE)
+  res1 <- arrow::read_parquet(temp1)
+  expect_true("geometry" %in% names(res1))
+  
+  # CRS as sf::crs object
+  url2 <- zs_serve_parquet(con, "test_crs", engine = "duckdb", layer_id = "test_crs_obj", crs = sf::st_crs(4326))
+  expect_match(url2, "test_crs_obj\\.parquet$")
+  temp2 <- tempfile(fileext = ".parquet")
+  curl::curl_download(url2, temp2, quiet = TRUE)
+  res2 <- arrow::read_parquet(temp2)
+  expect_true("geometry" %in% names(res2))
 })
 
 # Final cleanup for covr stability

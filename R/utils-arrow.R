@@ -34,7 +34,7 @@ as_arrow_stream <- function(x, crs = NULL) {
     } else {
       # Scan for blob/list columns that might be DuckDB geometries
       for (col in names(x)) {
-        if (inherits(x[[col]], "list") || inherits(x[[col]], "blob")) {
+        if (is.list(x[[col]]) || inherits(x[[col]], "blob")) {
           geom_col <- col
           break
         }
@@ -50,7 +50,7 @@ as_arrow_stream <- function(x, crs = NULL) {
 
       # Convert list/blob to sfc if needed
       if (!inherits(x[[geom_col]], "sfc")) {
-        x[[geom_col]] <- sf::st_as_sfc(x[[geom_col]])
+        x[[geom_col]] <- sf::st_as_sfc(unclass(x[[geom_col]]))
         x <- sf::st_as_sf(x, sf_column_name = geom_col)
       }
       
