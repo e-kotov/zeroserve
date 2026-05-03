@@ -1,0 +1,14 @@
+<urlset xmlns = 'http://www.sitemaps.org/schemas/sitemap/0.9'>
+<url><loc>https://e-kotov.github.io/zeroserve/404.html</loc></url>
+<url><loc>https://e-kotov.github.io/zeroserve/AGENTS.html</loc></url>
+<url><loc>https://e-kotov.github.io/zeroserve/LICENSE-text.html</loc></url>
+<url><loc>https://e-kotov.github.io/zeroserve/authors.html</loc></url>
+<url><loc>https://e-kotov.github.io/zeroserve/index.html</loc></url>
+<url><loc>https://e-kotov.github.io/zeroserve/reference/index.html</loc></url>
+<url><loc>https://e-kotov.github.io/zeroserve/reference/zs_clear_registry.html</loc></url>
+<url><loc>https://e-kotov.github.io/zeroserve/reference/zs_serve_arrow.html</loc></url>
+<url><loc>https://e-kotov.github.io/zeroserve/reference/zs_serve_file.html</loc></url>
+<url><loc>https://e-kotov.github.io/zeroserve/reference/zs_serve_parquet.html</loc></url>
+<url><loc>https://e-kotov.github.io/zeroserve/reference/zs_stop_server.html</loc></url>
+</urlset>
+
