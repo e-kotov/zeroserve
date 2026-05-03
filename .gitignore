@@ -1,0 +1,6 @@
+.Rprofile
+R_drafts/
+.DS_Store
+.Rhistory
+.RData
+.Ruserdata

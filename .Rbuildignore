@@ -1,0 +1,8 @@
+^conductor$
+^R_drafts$
+^roadmap\.md$
+^name_analysis\.md$
+^AGENTS\.md$
+^\.gemini/
+^conductor/.*
+^R_drafts/.*
