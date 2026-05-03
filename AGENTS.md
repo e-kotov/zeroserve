@@ -1,14 +1,14 @@
-# Agent Instructions: streamdeck
+# Agent Instructions: zeroserve
 
-## Project Overview
-`streamdeck` is a high-performance interoperability layer for the R spatial ecosystem. Its primary goal is to provide a comparable experience to Python's `lonboard` by enabling zero-copy binary transport of massive spatial datasets from backends (DuckDB, Arrow) to modern GPU-accelerated frontend renderers (deck.gl via MapLibre).
+`zeroserve` is a high-performance, frontend-agnostic transport layer for the R ecosystem. Its primary goal is to enable zero-copy binary transport of massive datasets from backends (DuckDB, Arrow, sf) to modern web frontends by serving them over a local HTTP server.
+
 
 ## Core Mission
 We are currently implementing the **Grand Rollout Plan** (see `roadmap.md` for context, though it is untracked). The focus is on building a minimal, robust transport layer without getting bogged down in mapping or styling logic.
 
 ## Current Phase
 We are starting **Phase 1: Minimal Core Transport**.
-- **Objective:** Create `serve_mori()` and `serve_parquet()` APIs.
+- **Objective:** Create `zs_serve_arrow()` and `zs_serve_parquet()` APIs.
 - **Reference Code:** Existing prototype logic has been moved to `R_drafts/`. Use these files as a source of truth for previously explored implementation details, but aim for a clean, production-ready implementation in the `R/` directory.
 
 ## Guiding Principles for Agents

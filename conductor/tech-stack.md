@@ -10,7 +10,8 @@
 
 ## Transport & Interoperability
 - **mori:** Facilitates in-memory Inter-Process Communication (IPC) and zero-copy binary arrays via ALTREP.
-- **httpuv / callr:** Powers the lightweight background server for streaming data over WebSockets or HTTP Range requests without blocking the main R session.
+- **httpuv / callr:** Powers the lightweight background server for streaming data over HTTP with manual Range request support.
+- **curl:** Used for high-performance validation and automated testing of the transport layer.
 
 ## Frontend & Rendering
 - **htmlwidgets:** Bridges R and JavaScript for browser-based rendering.

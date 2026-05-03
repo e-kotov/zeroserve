@@ -1,0 +1,28 @@
+Package: zeroserve
+Title: High-Performance Inter-Process Communication and Data Serving
+Version: 0.1.0
+Authors@R: 
+    person("Egor", "Kotov", , "kotov.egor@gmail.com", role = c("aut", "cre", "cph"),
+           comment = c(ORCID = "0000-0001-6690-5345"))
+Description: A high-performance, frontend-agnostic transport layer that streams large datasets directly to the browser for use in htmlwidgets, Shiny apps, or custom web frontends. It leverages zero-copy Arrow IPC streams (via shared memory) or HTTP Range requests (for disk-based files) to bypass the bottlenecks of JSON serialization. While general-purpose, it provides specialized support for DuckDB, sf, and Arrow objects, bridging R memory to web visualizations with minimal overhead.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Imports:
+    nanoarrow,
+    mori,
+    httpuv,
+    rlang,
+    callr
+Suggests:
+    arrow,
+    curl,
+    sf,
+    duckdb,
+    duckspatial,
+    geoarrow,
+    dbplyr,
+    DBI,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
