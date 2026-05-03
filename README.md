@@ -11,6 +11,7 @@ Active](https://www.repostatus.org/badges/latest/active.svg)](https://www.repost
 [![Lifecycle:
 experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 [![R-CMD-check](https://github.com/e-kotov/zeroserve/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/e-kotov/zeroserve/actions/workflows/R-CMD-check.yaml)
+[![codecov](https://codecov.io/gh/e-kotov/zeroserve/branch/main/graph/badge.svg)](https://app.codecov.io/gh/e-kotov/zeroserve)
 <!-- badges: end -->
 
 A high-performance, frontend-agnostic transport layer that streams large
