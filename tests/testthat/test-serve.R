@@ -256,3 +256,9 @@ test_that("zs_serve_parquet returns a valid streaming URL (spatial)", {
   curl::curl_download(url, temp_out, quiet = TRUE)
   expect_true(file.size(temp_out) > 0)
 })
+
+# Final cleanup for covr stability
+# We stop the server and clear all buffers to ensure no ALTREP/background
+# processes are alive when covr attempts to finalize the trace.
+zs_stop_server()
+zs_clear_registry()
