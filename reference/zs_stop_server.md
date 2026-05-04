@@ -11,3 +11,11 @@ zs_stop_server()
 ## Value
 
 Logical; TRUE if server was stopped, FALSE if it wasn't running.
+
+## Examples
+
+``` r
+if (FALSE) { # \dontrun{
+zs_stop_server()
+} # }
+```

@@ -1,4 +1,4 @@
-# zeroserve: High-Performance Inter-Process Communication and Data Serving [![zeroserve website](reference/figures/logo.png)](https://e-kotov.github.io/zeroserve/)
+# zeroserve: High-Performance Inter-Process Communication and Data Serving
 
 A high-performance, frontend-agnostic transport layer that streams large
 datasets directly to the browser for use in `htmlwidgets`, `Shiny` apps,

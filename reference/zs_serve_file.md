@@ -21,3 +21,15 @@ zs_serve_file(file_path, layer_id = "stream")
 ## Value
 
 A URL string pointing to the localhost background server.
+
+## Examples
+
+``` r
+if (FALSE) { # \dontrun{
+temp_f <- tempfile(fileext = ".txt")
+writeLines("hello world", temp_f)
+url <- zs_serve_file(temp_f)
+print(url)
+zs_stop_server()
+} # }
+```

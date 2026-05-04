@@ -39,3 +39,15 @@ zs_serve_parquet(
 ## Value
 
 A URL string pointing to the localhost background server.
+
+## Examples
+
+``` r
+if (FALSE) { # \dontrun{
+library(sf)
+nc <- st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
+url <- zs_serve_parquet(nc)
+print(url)
+zs_stop_server()
+} # }
+```
