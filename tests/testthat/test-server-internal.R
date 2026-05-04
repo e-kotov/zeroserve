@@ -39,27 +39,29 @@ test_that(".handle_request handles 404 for missing file on disk", {
 
 test_that(".handle_request handles valid range requests", {
   temp_f <- tempfile(fileext = ".txt")
-  writeLines("0123456789", temp_f)
+  # Use writeBin to ensure exact byte count (10 bytes: 0123456789) regardless of OS line endings
+  writeBin(charToRaw("0123456789"), temp_f)
   
   registry_file <- tempfile(fileext = ".rds")
   saveRDS(list("/test" = list(type = "file", path = temp_f)), registry_file)
   log_file <- tempfile(fileext = ".log")
   
-  # Request bytes 0-4 ("01234" + newline?) 
-  # Wait, writeLines adds a newline. "0123456789\n" is 11 bytes.
-  
+  # Request bytes 0-4 ("01234") 
   req <- list(PATH_INFO = "/test", HTTP_RANGE = "bytes=0-4")
   res <- .handle_request(req, registry_file, log_file)
   
   expect_equal(res$status, 206L)
   expect_equal(length(res$body), 5)
   expect_equal(rawToChar(res$body), "01234")
-  expect_match(res$headers[["Content-Range"]], "bytes 0-4/11")
+  
+  # Total size is exactly 10 bytes
+  expect_match(res$headers[["Content-Range"]], "bytes 0-4/10")
 })
 
 test_that(".handle_request handles invalid range requests (416)", {
   temp_f <- tempfile(fileext = ".txt")
-  writeLines("0123456789", temp_f)
+  # Use writeBin for consistency
+  writeBin(charToRaw("0123456789"), temp_f)
   
   registry_file <- tempfile(fileext = ".rds")
   saveRDS(list("/test" = list(type = "file", path = temp_f)), registry_file)
