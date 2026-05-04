@@ -12,3 +12,8 @@ Logical; TRUE if server was stopped, FALSE if it wasn't running.
 \description{
 Stop the background zeroserve server
 }
+\examples{
+\dontrun{
+zs_stop_server()
+}
+}

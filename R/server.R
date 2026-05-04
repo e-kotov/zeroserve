@@ -149,6 +149,11 @@ start_server <- function() {
 #'
 #' @return Logical; TRUE if server was stopped, FALSE if it wasn't running.
 #' @export
+#'
+#' @examples
+#' \dontrun{
+#' zs_stop_server()
+#' }
 zs_stop_server <- function() {
   if (is.null(.zeroserve_env$server)) {
     return(FALSE)
@@ -172,6 +177,11 @@ zs_stop_server <- function() {
 #'
 #' @return Logical; TRUE if registry was cleared.
 #' @export
+#'
+#' @examples
+#' \dontrun{
+#' zs_clear_registry()
+#' }
 zs_clear_registry <- function() {
   # Free shared memory buffers
   .zeroserve_env$mori_buffers <- list()

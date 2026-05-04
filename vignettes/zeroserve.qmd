@@ -1,0 +1,105 @@
+---
+title: "Introduction to zeroserve"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    code-overflow: wrap
+vignette: >
+  %\VignetteIndexEntry{Introduction to zeroserve}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+`zeroserve` provides a high-performance transport layer for streaming large datasets from R to web frontends. It is designed to be frontend-agnostic and supports various data formats and sources.
+
+## Core Concepts
+
+The package focuses on two main methods of serving data:
+
+1.  **Arrow IPC Streams:** Best for in-memory data that should be shared with minimal overhead using shared memory.
+2.  **Parquet Files:** Best for larger-than-memory data or data already on disk, served via HTTP with support for range requests.
+
+## Basic Usage
+
+### Serving an Arrow Stream
+
+To serve an `sf` object as an Arrow stream:
+
+```{r}
+library(zeroserve)
+library(sf)
+
+# Create some sample data
+nc <- st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
+
+# Serve the data
+url <- zs_serve_arrow(nc)
+print(url)
+
+# Verify the data (e.g., using curl)
+# This simulates what a frontend would do
+res <- curl::curl_fetch_memory(url)
+cat("Fetched", length(res$content), "bytes of Arrow IPC data\n")
+
+# Clean up when done
+zs_stop_server()
+```
+
+### Serving a Parquet File
+
+To serve a DuckDB table as a streamable Parquet file:
+
+```{r}
+library(zeroserve)
+library(DBI)
+
+# Connect to DuckDB
+con <- dbConnect(duckdb::duckdb())
+
+# Load built-in data into DuckDB
+dbWriteTable(con, "mtcars", mtcars)
+
+# Serve a query result
+url <- zs_serve_parquet(con, "SELECT * FROM mtcars", layer_id = "cars")
+print(url)
+
+# Verify the data
+# The arrow package can read directly from the URL
+df <- arrow::read_parquet(url)
+head(df)
+
+# Clean up
+zs_stop_server()
+dbDisconnect(con, shutdown = TRUE)
+```
+
+## Advanced: HTTP Range Requests
+
+One of the key features of `zeroserve` is its support for HTTP Range requests. This allows client-side applications (like those using [DuckDB-Wasm](https://duckdb.org/docs/api/wasm/overview)) to fetch only the specific parts of a Parquet file they need, rather than downloading the entire file.
+
+```{r}
+library(zeroserve)
+
+# Serve a file (e.g., the built-in mtcars as a temp file)
+temp_p <- tempfile(fileext = ".parquet")
+arrow::write_parquet(mtcars, temp_p)
+url <- zs_serve_file(temp_p)
+
+# Fetch only the first 100 bytes using a Range header
+h <- curl::new_handle()
+curl::handle_setheaders(h, Range = "bytes=0-99")
+res <- curl::curl_fetch_memory(url, handle = h)
+
+# Check the response
+print(res$status_code) # Should be 206 (Partial Content)
+cat("Fetched", length(res$content), "bytes\n")
+print(res$headers["content-range"])
+
+# Clean up
+zs_stop_server()
+```
+
+## Next Steps
+
+For more information, please refer to the function documentation.

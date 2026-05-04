@@ -6,6 +6,15 @@
 #'
 #' @return A URL string pointing to the localhost background server.
 #' @export
+#'
+#' @examples
+#' \dontrun{
+#' library(sf)
+#' nc <- st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
+#' url <- zs_serve_arrow(nc)
+#' print(url)
+#' zs_stop_server()
+#' }
 zs_serve_arrow <- function(x, layer_id = "stream", crs = NULL) {
   na_stream <- as_arrow_stream(x, crs = crs)
   on.exit(na_stream$release())
@@ -41,6 +50,15 @@ zs_serve_arrow <- function(x, layer_id = "stream", crs = NULL) {
 #'
 #' @return A URL string pointing to the localhost background server.
 #' @export
+#'
+#' @examples
+#' \dontrun{
+#' temp_f <- tempfile(fileext = ".txt")
+#' writeLines("hello world", temp_f)
+#' url <- zs_serve_file(temp_f)
+#' print(url)
+#' zs_stop_server()
+#' }
 zs_serve_file <- function(file_path, layer_id = "stream") {
   if (!file.exists(file_path)) {
     stop(sprintf("File does not exist: %s", file_path))
@@ -75,6 +93,15 @@ zs_serve_file <- function(file_path, layer_id = "stream") {
 #'
 #' @return A URL string pointing to the localhost background server.
 #' @export
+#'
+#' @examples
+#' \dontrun{
+#' library(sf)
+#' nc <- st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
+#' url <- zs_serve_parquet(nc)
+#' print(url)
+#' zs_stop_server()
+#' }
 zs_serve_parquet <- function(
     data, 
     query = NULL, 

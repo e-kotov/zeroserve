@@ -29,3 +29,12 @@ A URL string pointing to the localhost background server.
 \description{
 Serve data via Out-Of-Core Parquet export
 }
+\examples{
+\dontrun{
+library(sf)
+nc <- st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
+url <- zs_serve_parquet(nc)
+print(url)
+zs_stop_server()
+}
+}

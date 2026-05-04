@@ -17,3 +17,12 @@ A URL string pointing to the localhost background server.
 \description{
 Serve an existing file via HTTP with Range request support
 }
+\examples{
+\dontrun{
+temp_f <- tempfile(fileext = ".txt")
+writeLines("hello world", temp_f)
+url <- zs_serve_file(temp_f)
+print(url)
+zs_stop_server()
+}
+}

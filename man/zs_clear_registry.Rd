@@ -13,3 +13,8 @@ Logical; TRUE if registry was cleared.
 This stops serving all currently registered resources and frees
 associated memory buffers.
 }
+\examples{
+\dontrun{
+zs_clear_registry()
+}
+}
