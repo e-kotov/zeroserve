@@ -1,3 +1,10 @@
+expect_arrow_download <- function(url) {
+  temp_out <- tempfile(fileext = ".arrow")
+  curl::curl_download(url, temp_out, quiet = TRUE)
+  expect_true(file.size(temp_out) > 0)
+  nanoarrow::read_nanoarrow(temp_out)
+}
+
 test_that("zs_serve_file handles generic files", {
   skip_if_not_installed("httpuv")
   skip_if_not_installed("curl")
@@ -79,6 +86,123 @@ test_that("zs_serve_arrow handles standard data.frame (non-spatial)", {
   expect_true("b" %in% names(schema$children))
 })
 
+test_that("zs_serve_arrow handles DuckDB connection with table name", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+  skip_if_not_installed("nanoarrow")
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("DBI")
+  skip_if_not_installed("arrow")
+
+  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+
+  df <- data.frame(a = 1:5, b = letters[1:5])
+  DBI::dbWriteTable(con, "test_table", df)
+
+  url <- zs_serve_arrow(con, query = "test_table", layer_id = "test_duckdb_table")
+  expect_match(url, "^http://127.0.0.1:[0-9]+/test_duckdb_table\\.arrow$")
+
+  stream <- expect_arrow_download(url)
+  res <- as.data.frame(stream)
+  expect_equal(res$a, 1:5)
+  expect_equal(res$b, letters[1:5])
+})
+
+test_that("zs_serve_arrow handles DuckDB connection with SQL query", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+  skip_if_not_installed("nanoarrow")
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("DBI")
+  skip_if_not_installed("arrow")
+
+  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+
+  df <- data.frame(a = 1:5, b = letters[1:5])
+  DBI::dbWriteTable(con, "test_table", df)
+
+  url <- zs_serve_arrow(
+    con,
+    query = "SELECT a, b FROM test_table WHERE a >= 3 ORDER BY a",
+    layer_id = "test_duckdb_sql"
+  )
+  expect_match(url, "^http://127.0.0.1:[0-9]+/test_duckdb_sql\\.arrow$")
+
+  stream <- expect_arrow_download(url)
+  res <- as.data.frame(stream)
+  expect_equal(res$a, 3:5)
+  expect_equal(res$b, letters[3:5])
+})
+
+test_that("zs_serve_arrow handles DuckDB-backed dbplyr tables", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+  skip_if_not_installed("nanoarrow")
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("DBI")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("dplyr")
+
+  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+
+  df <- data.frame(a = 1:5, b = letters[1:5])
+  DBI::dbWriteTable(con, "test_table", df)
+  tbl <- dplyr::tbl(con, "test_table")
+
+  url <- zs_serve_arrow(tbl, layer_id = "test_duckdb_tbl")
+  expect_match(url, "^http://127.0.0.1:[0-9]+/test_duckdb_tbl\\.arrow$")
+
+  stream <- expect_arrow_download(url)
+  res <- as.data.frame(stream)
+  expect_equal(res$a, 1:5)
+  expect_equal(res$b, letters[1:5])
+})
+
+test_that("zs_serve_arrow handles duckspatial_df inputs", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+  skip_if_not_installed("nanoarrow")
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("DBI")
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("dbplyr")
+  skip_if_not_installed("dplyr")
+  skip_if_not_installed("duckspatial")
+
+  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+
+  df <- data.frame(a = 1:5, b = letters[1:5])
+  DBI::dbWriteTable(con, "test_table", df)
+  tbl <- duckspatial::as_duckspatial_df(dplyr::tbl(con, "test_table"), crs = 4326)
+
+  url <- zs_serve_arrow(tbl, layer_id = "test_duckspatial_df")
+  expect_match(url, "^http://127.0.0.1:[0-9]+/test_duckspatial_df\\.arrow$")
+
+  stream <- expect_arrow_download(url)
+  res <- as.data.frame(stream)
+  expect_equal(res$a, 1:5)
+  expect_equal(res$b, letters[1:5])
+})
+
+test_that("zs_serve_arrow requires query for DuckDB connections", {
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("DBI")
+
+  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
+  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+
+  expect_error(
+    zs_serve_arrow(con),
+    "`query` is required when `x` is a DuckDB connection.",
+    fixed = TRUE
+  )
+})
+
 test_that("zs_serve_arrow handles empty sf object", {
   skip_if_not_installed("httpuv")
   skip_if_not_installed("curl")
@@ -141,25 +265,62 @@ test_that("zs_stop_server and zs_clear_registry work", {
   skip_if_not_installed("httpuv")
   skip_if_not_installed("curl")
   
+  # Ensure clean start
+  zs_stop_server()
+  
   df <- data.frame(a = 1)
   url <- zs_serve_arrow(df, layer_id = "test_lifecycle")
   
   # Registry should have one item
-  reg <- readRDS(.zeroserve_env$registry_file)
+  reg <- zeroserve:::.send_ipc("/list")
   expect_true("/test_lifecycle.arrow" %in% names(reg))
+  
+  # Ping check
+  expect_true(zs_server_status(ping = TRUE))
   
   # Clear registry
   zs_clear_registry()
-  reg <- readRDS(.zeroserve_env$registry_file)
+  reg <- zeroserve:::.send_ipc("/list")
   expect_equal(length(reg), 0)
   expect_equal(length(.zeroserve_env$mori_buffers), 0)
   
   # Stop server
   expect_true(zs_stop_server())
   expect_null(.zeroserve_env$server)
+  expect_false(zs_server_status(ping = TRUE))
   
   # Subsequent download should fail
   expect_error(curl::curl_download(url, tempfile(), quiet = TRUE))
+})
+
+test_that("server handles CORS OPTIONS and HEAD requests", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+  
+  temp_f <- tempfile(fileext = ".txt")
+  writeLines("hello", temp_f)
+  url <- zs_serve_file(temp_f, layer_id = "test_cors_head")
+  
+  # OPTIONS
+  h <- curl::new_handle()
+  curl::handle_setopt(h, customrequest = "OPTIONS")
+  res_opt <- curl::curl_fetch_memory(url, handle = h)
+  expect_equal(res_opt$status_code, 204)
+  headers_opt <- curl::parse_headers(res_opt$headers)
+  expect_true(any(grepl("Access-Control-Allow-Methods", headers_opt, ignore.case = TRUE)))
+  
+  # HEAD
+  h2 <- curl::new_handle()
+  curl::handle_setopt(h2, nobody = TRUE)
+  res_head <- curl::curl_fetch_memory(url, handle = h2)
+  expect_equal(res_head$status_code, 200)
+  expect_equal(length(res_head$content), 0)
+  headers_head <- curl::parse_headers(res_head$headers)
+  expect_true(any(grepl("Content-Length", headers_head, ignore.case = TRUE)))
+})
+
+test_that("register_resource prevents collision with reserved path", {
+  expect_error(register_resource("/__zs__/hack", list(type = "none")), "reserved")
 })
 
 test_that("zs_serve_arrow returns a valid streaming URL (spatial)", {
@@ -238,7 +399,7 @@ test_that("zs_serve_parquet supports HTTP Range requests", {
   expect_equal(res2$status_code, 206)
   
   # Get actual file size from registry
-  reg <- readRDS(.zeroserve_env$registry_file)
+  reg <- zeroserve:::.send_ipc("/list")
   file_path <- reg[["/test_range.parquet"]]$path
   file_size <- file.info(file_path)$size
   
@@ -337,6 +498,41 @@ test_that("zs_serve_parquet handles CRS as number and crs object", {
   curl::curl_download(url2, temp2, quiet = TRUE)
   res2 <- arrow::read_parquet(temp2)
   expect_true("geometry" %in% names(res2))
+})
+
+test_that("zs_server_status and zs_server_logs work", {
+  skip_if_not_installed("httpuv")
+  
+  # Before starting
+  zs_stop_server()
+  expect_false(zs_server_status())
+  
+  # Start server implicitly
+  df <- data.frame(a = 1)
+  zs_serve_arrow(df, layer_id = "test_status")
+  
+  expect_true(zs_server_status())
+  
+  logs <- zs_server_logs()
+  expect_true(is.character(logs))
+  expect_true(length(logs) > 0)
+  expect_match(paste(logs, collapse = "\n"), "Background Process Started")
+})
+
+test_that("open-ended range requests work", {
+  skip_if_not_installed("curl")
+  
+  temp_f <- tempfile(fileext = ".txt")
+  writeLines("0123456789", temp_f)
+  
+  url <- zs_serve_file(temp_f, layer_id = "test_open_range")
+  
+  h <- curl::new_handle()
+  curl::handle_setheaders(h, "Range" = "bytes=5-")
+  res <- curl::curl_fetch_memory(url, handle = h)
+  
+  expect_equal(res$status_code, 206)
+  expect_equal(rawToChar(res$content), "56789\n") # writeLines adds a newline
 })
 
 # Final cleanup for covr stability

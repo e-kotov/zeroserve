@@ -4,10 +4,14 @@
 \alias{zs_serve_arrow}
 \title{Serve an object via In-Memory Arrow IPC (mori)}
 \usage{
-zs_serve_arrow(x, layer_id = "stream", crs = NULL)
+zs_serve_arrow(x, query = NULL, layer_id = "stream", crs = NULL)
 }
 \arguments{
-\item{x}{A spatial object (e.g. \code{sf}, \code{duckspatial_df}).}
+\item{x}{A spatial object (e.g. \code{sf}, \code{duckspatial_df}), data frame,
+\code{nanoarrow_array_stream}, DuckDB connection, or DuckDB-backed lazy table.}
+
+\item{query}{A SQL query string or simple table name. Required when \code{x} is a
+DuckDB connection.}
 
 \item{layer_id}{A unique identifier for this data stream.}
 

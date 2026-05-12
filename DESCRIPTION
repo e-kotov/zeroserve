@@ -13,18 +13,20 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Imports:
     nanoarrow,
-    mori,
+    mori (>= 0.2.0),
     httpuv,
     rlang,
-    callr
+    callr,
+    curl,
+    jsonlite
 Suggests:
     arrow,
-    curl,
     sf,
     duckdb,
     duckspatial,
     geoarrow,
     dbplyr,
+    dplyr,
     DBI,
     knitr,
     rmarkdown,

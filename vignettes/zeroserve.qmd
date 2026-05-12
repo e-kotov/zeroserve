@@ -71,33 +71,71 @@ head(df)
 
 # Clean up
 zs_stop_server()
-dbDisconnect(con, shutdown = TRUE)
+dbDisconnect(con)
 ```
 
 ## Advanced: HTTP Range Requests
 
-One of the key features of `zeroserve` is its support for HTTP Range requests. This allows client-side applications (like those using [DuckDB-Wasm](https://duckdb.org/docs/api/wasm/overview)) to fetch only the specific parts of a Parquet file they need, rather than downloading the entire file.
+One of the key features of `zeroserve` is its robust support for HTTP Range requests (RFC 7233). This allows client-side applications (like those using [DuckDB-Wasm](https://duckdb.org/docs/api/wasm/overview)) to fetch only the specific parts of a Parquet file they need.
+
+The handler is hardened to handle various client styles, including those that add extra whitespace or use suffix-byte ranges:
 
 ```{r}
-library(zeroserve)
-
-# Serve a file (e.g., the built-in mtcars as a temp file)
+# Serve a file
 temp_p <- tempfile(fileext = ".parquet")
 arrow::write_parquet(mtcars, temp_p)
 url <- zs_serve_file(temp_p)
 
-# Fetch only the first 100 bytes using a Range header
+# Fetch a range with non-standard whitespace (handled automatically)
 h <- curl::new_handle()
-curl::handle_setheaders(h, Range = "bytes=0-99")
+curl::handle_setheaders(h, Range = " bytes = 0 - 99 ")
 res <- curl::curl_fetch_memory(url, handle = h)
 
-# Check the response
-print(res$status_code) # Should be 206 (Partial Content)
-cat("Fetched", length(res$content), "bytes\n")
-print(res$headers["content-range"])
+# Parse and check headers
+headers <- curl::parse_headers(res$headers)
+print(res$status_code) # 206 (Partial Content)
+print(grep("Content-Range", headers, value = TRUE, ignore.case = TRUE))
 
+# Fetch only the last 500 bytes (suffix range)
+curl::handle_setheaders(h, Range = "bytes=-500")
+res_suffix <- curl::curl_fetch_memory(url, handle = h)
+cat("Fetched last", length(res_suffix$content), "bytes\n")
+```
+
+## Monitoring and Maintenance
+
+### Server Status
+
+You can check if the server is running using `zs_server_status()`. For a more thorough check, use `ping = TRUE` to verify that the background event loop is actually responsive:
+
+```{r}
+# Basic process check
+zs_server_status()
+
+# Deep health check (via IPC ping)
+zs_server_status(ping = TRUE)
+```
+
+### Logging
+
+If you encounter issues, you can inspect the last few lines of the background server log:
+
+```{r}
+zs_server_logs(n = 10)
+```
+
+## Web Compatibility (CORS)
+
+`zeroserve` is designed to work seamlessly with modern web browsers. It includes built-in support for **CORS (Cross-Origin Resource Sharing)**, including `OPTIONS` preflight requests. This means you can point tools like [Deck.gl](https://deck.gl/) or [geoarrow-js](https://github.com/geoarrow/geoarrow-js) directly at the `zeroserve` URL without needing an intermediate proxy.
+
+## Next Steps
+
+For more information, please refer to the function documentation or the [Architecture Review](https://github.com/e-kotov/zeroserve/blob/main/ARCHITECTURE_REVIEW.md).
+
+```{r}
 # Clean up
 zs_stop_server()
+zs_server_status()
 ```
 
 ## Next Steps

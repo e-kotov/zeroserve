@@ -1,6 +1,9 @@
 #' Serve an object via In-Memory Arrow IPC (mori)
 #'
-#' @param x A spatial object (e.g. `sf`, `duckspatial_df`).
+#' @param x A spatial object (e.g. `sf`, `duckspatial_df`), data frame,
+#'   `nanoarrow_array_stream`, DuckDB connection, or DuckDB-backed lazy table.
+#' @param query A SQL query string or simple table name. Required when `x` is a
+#'   DuckDB connection.
 #' @param layer_id A unique identifier for this data stream.
 #' @param crs Optional Coordinate Reference System.
 #'
@@ -15,16 +18,19 @@
 #' print(url)
 #' zs_stop_server()
 #' }
-zs_serve_arrow <- function(x, layer_id = "stream", crs = NULL) {
-  na_stream <- as_arrow_stream(x, crs = crs)
-  on.exit(na_stream$release())
+zs_serve_arrow <- function(x, query = NULL, layer_id = "stream", crs = NULL) {
+  buf <- if (.zs_is_duckdb_arrow_input(x)) {
+    .zs_duckdb_arrow_ipc_buffer(x, query = query)
+  } else {
+    na_stream <- as_arrow_stream(x, crs = crs)
+    on.exit(na_stream$release(), add = TRUE)
+    .zs_arrow_stream_to_raw(na_stream)
+  }
 
-  # Serialize the Arrow IPC stream into a raw vector in memory
-  con <- rawConnection(raw(0), "w")
-  nanoarrow::write_nanoarrow(na_stream, con)
-  buf <- rawConnectionValue(con)
-  close(con)
+  .zs_serve_arrow_buffer(buf, layer_id = layer_id)
+}
 
+.zs_serve_arrow_buffer <- function(buf, layer_id = "stream") {
   # Share the raw vector via mori
   shared_buf <- mori::share(buf)
   shm_name <- mori::shared_name(shared_buf)
@@ -41,6 +47,109 @@ zs_serve_arrow <- function(x, layer_id = "stream", crs = NULL) {
   ))
 
   url
+}
+
+.zs_arrow_stream_to_raw <- function(stream) {
+  # Serialize the Arrow IPC stream into a raw vector in memory.
+  con <- rawConnection(raw(0), "w")
+  on.exit(close(con), add = TRUE)
+  nanoarrow::write_nanoarrow(stream, con)
+  rawConnectionValue(con)
+}
+
+.zs_is_duckdb_arrow_input <- function(x) {
+  if (inherits(x, "duckdb_connection") || inherits(x, "duckspatial_df")) {
+    return(TRUE)
+  }
+
+  if (!inherits(x, c("tbl_sql", "tbl_lazy"))) {
+    return(FALSE)
+  }
+
+  if (!requireNamespace("dbplyr", quietly = TRUE)) {
+    return(TRUE)
+  }
+
+  conn <- tryCatch(dbplyr::remote_con(x), error = function(e) NULL)
+  inherits(conn, "duckdb_connection")
+}
+
+.zs_duckdb_arrow_ipc_buffer <- function(x, query = NULL) {
+  .zs_require_namespace("DBI", "DuckDB Arrow serving")
+  .zs_require_namespace("duckdb", "DuckDB Arrow serving")
+  .zs_require_namespace("arrow", "DuckDB Arrow serving")
+
+  source <- .zs_duckdb_arrow_source(x, query = query)
+  res <- NULL
+  stream <- NULL
+
+  tryCatch({
+    res <- DBI::dbSendQuery(source$conn, source$sql, arrow = TRUE)
+    on.exit(try(DBI::dbClearResult(res), silent = TRUE), add = TRUE)
+
+    reader <- duckdb::duckdb_fetch_record_batch(res)
+    stream <- nanoarrow::as_nanoarrow_array_stream(reader)
+    on.exit({
+      if (!is.null(stream$release)) {
+        stream$release()
+      }
+    }, add = TRUE)
+
+    .zs_arrow_stream_to_raw(stream)
+  }, error = function(e) {
+    stop(
+      "DuckDB Arrow path failed: ", conditionMessage(e),
+      ". For large or out-of-core data, use zs_serve_parquet().",
+      call. = FALSE
+    )
+  })
+}
+
+.zs_duckdb_arrow_source <- function(x, query = NULL) {
+  if (inherits(x, "duckdb_connection")) {
+    if (is.null(query)) {
+      stop("`query` is required when `x` is a DuckDB connection.", call. = FALSE)
+    }
+
+    return(list(
+      conn = x,
+      sql = .zs_duckdb_query_sql(x, query)
+    ))
+  }
+
+  .zs_require_namespace("dbplyr", "DuckDB-backed lazy table Arrow serving")
+
+  conn <- dbplyr::remote_con(x)
+  if (!inherits(conn, "duckdb_connection")) {
+    stop("DuckDB Arrow serving requires a DuckDB-backed input.", call. = FALSE)
+  }
+
+  list(
+    conn = conn,
+    sql = as.character(dbplyr::sql_render(x))
+  )
+}
+
+.zs_duckdb_query_sql <- function(conn, query) {
+  if (!is.character(query) || length(query) != 1 || is.na(query) || query == "") {
+    stop("`query` must be a single non-empty SQL string or table name.", call. = FALSE)
+  }
+
+  if (.zs_is_simple_table_name(query)) {
+    return(sprintf("SELECT * FROM %s", as.character(DBI::dbQuoteIdentifier(conn, query))))
+  }
+
+  query
+}
+
+.zs_is_simple_table_name <- function(query) {
+  grepl("^[A-Za-z_][A-Za-z0-9_]*$", query)
+}
+
+.zs_require_namespace <- function(package, context) {
+  if (!requireNamespace(package, quietly = TRUE)) {
+    stop(sprintf("%s requires the '%s' package.", context, package), call. = FALSE)
+  }
 }
 
 #' Serve an existing file via HTTP with Range request support
@@ -182,5 +291,8 @@ zs_serve_parquet <- function(
     arrow::write_parquet(na_stream, file_path)
   }
 
+  # Track temp file for cleanup
+  .zeroserve_env$temp_files <- c(.zeroserve_env$temp_files, file_path)
+  
   zs_serve_file(file_path, layer_id)
 }
