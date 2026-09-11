@@ -41,10 +41,13 @@ zs_serve_arrow <- function(x, query = NULL, layer_id = "stream", crs = NULL) {
 
   path <- sprintf("/%s.arrow", layer_id)
 
-  url <- register_resource(path, list(
-    type = "mori",
-    shm_name = shm_name
-  ))
+  url <- register_resource(
+    path,
+    list(
+      type = "mori",
+      shm_name = shm_name
+    )
+  )
 
   url
 }
@@ -83,32 +86,42 @@ zs_serve_arrow <- function(x, query = NULL, layer_id = "stream", crs = NULL) {
   res <- NULL
   stream <- NULL
 
-  tryCatch({
-    res <- DBI::dbSendQuery(source$conn, source$sql, arrow = TRUE)
-    on.exit(try(DBI::dbClearResult(res), silent = TRUE), add = TRUE)
+  tryCatch(
+    {
+      res <- DBI::dbSendQuery(source$conn, source$sql, arrow = TRUE)
+      on.exit(try(DBI::dbClearResult(res), silent = TRUE), add = TRUE)
 
-    reader <- duckdb::duckdb_fetch_record_batch(res)
-    stream <- nanoarrow::as_nanoarrow_array_stream(reader)
-    on.exit({
-      if (!is.null(stream$release)) {
-        stream$release()
-      }
-    }, add = TRUE)
+      reader <- duckdb::duckdb_fetch_record_batch(res)
+      stream <- nanoarrow::as_nanoarrow_array_stream(reader)
+      on.exit(
+        {
+          if (!is.null(stream$release)) {
+            stream$release()
+          }
+        },
+        add = TRUE
+      )
 
-    .zs_arrow_stream_to_raw(stream)
-  }, error = function(e) {
-    stop(
-      "DuckDB Arrow path failed: ", conditionMessage(e),
-      ". For large or out-of-core data, use zs_serve_parquet().",
-      call. = FALSE
-    )
-  })
+      .zs_arrow_stream_to_raw(stream)
+    },
+    error = function(e) {
+      stop(
+        "DuckDB Arrow path failed: ",
+        conditionMessage(e),
+        ". For large or out-of-core data, use zs_serve_parquet().",
+        call. = FALSE
+      )
+    }
+  )
 }
 
 .zs_duckdb_arrow_source <- function(x, query = NULL) {
   if (inherits(x, "duckdb_connection")) {
     if (is.null(query)) {
-      stop("`query` is required when `x` is a DuckDB connection.", call. = FALSE)
+      stop(
+        "`query` is required when `x` is a DuckDB connection.",
+        call. = FALSE
+      )
     }
 
     return(list(
@@ -131,12 +144,20 @@ zs_serve_arrow <- function(x, query = NULL, layer_id = "stream", crs = NULL) {
 }
 
 .zs_duckdb_query_sql <- function(conn, query) {
-  if (!is.character(query) || length(query) != 1 || is.na(query) || query == "") {
-    stop("`query` must be a single non-empty SQL string or table name.", call. = FALSE)
+  if (
+    !is.character(query) || length(query) != 1 || is.na(query) || query == ""
+  ) {
+    stop(
+      "`query` must be a single non-empty SQL string or table name.",
+      call. = FALSE
+    )
   }
 
   if (.zs_is_simple_table_name(query)) {
-    return(sprintf("SELECT * FROM %s", as.character(DBI::dbQuoteIdentifier(conn, query))))
+    return(sprintf(
+      "SELECT * FROM %s",
+      as.character(DBI::dbQuoteIdentifier(conn, query))
+    ))
   }
 
   query
@@ -148,7 +169,10 @@ zs_serve_arrow <- function(x, query = NULL, layer_id = "stream", crs = NULL) {
 
 .zs_require_namespace <- function(package, context) {
   if (!requireNamespace(package, quietly = TRUE)) {
-    stop(sprintf("%s requires the '%s' package.", context, package), call. = FALSE)
+    stop(
+      sprintf("%s requires the '%s' package.", context, package),
+      call. = FALSE
+    )
   }
 }
 
@@ -172,10 +196,10 @@ zs_serve_file <- function(file_path, layer_id = "stream") {
   if (!file.exists(file_path)) {
     stop(sprintf("File does not exist: %s", file_path))
   }
-  
+
   # Ensure we use an absolute path
   file_path <- normalizePath(file_path)
-  
+
   # Use file extension as part of the path if possible
   ext <- tools::file_ext(file_path)
   path <- if (ext == "") {
@@ -183,12 +207,15 @@ zs_serve_file <- function(file_path, layer_id = "stream") {
   } else {
     sprintf("/%s.%s", layer_id, ext)
   }
-  
-  url <- register_resource(path, list(
-    type = "file",
-    path = file_path
-  ))
-  
+
+  url <- register_resource(
+    path,
+    list(
+      type = "file",
+      path = file_path
+    )
+  )
+
   url
 }
 
@@ -212,23 +239,26 @@ zs_serve_file <- function(file_path, layer_id = "stream") {
 #' zs_stop_server()
 #' }
 zs_serve_parquet <- function(
-    data, 
-    query = NULL, 
-    engine = c("duckdb", "arrow"), 
-    layer_id = "stream", 
-    crs = NULL
+  data,
+  query = NULL,
+  engine = c("duckdb", "arrow"),
+  layer_id = "stream",
+  crs = NULL
 ) {
   engine <- match.arg(engine)
-  
+
   temp_dir <- tempfile(pattern = paste0("zeroserve_", layer_id))
   dir.create(temp_dir, showWarnings = FALSE, recursive = TRUE)
   file_path <- file.path(temp_dir, sprintf("%s.parquet", layer_id))
 
   if (engine == "duckdb") {
-    if (!requireNamespace("DBI", quietly = TRUE) || !requireNamespace("duckdb", quietly = TRUE)) {
+    if (
+      !requireNamespace("DBI", quietly = TRUE) ||
+        !requireNamespace("duckdb", quietly = TRUE)
+    ) {
       stop("Engine 'duckdb' requires the 'DBI' and 'duckdb' packages.")
     }
-    
+
     conn <- data
     sql <- if (grepl(" ", query)) {
       query
@@ -236,8 +266,11 @@ zs_serve_parquet <- function(
       sprintf("SELECT * FROM %s", query)
     }
 
-    col_info <- DBI::dbGetQuery(conn, sprintf("SELECT * FROM (%s) LIMIT 0", sql))
-    
+    col_info <- DBI::dbGetQuery(
+      conn,
+      sprintf("SELECT * FROM (%s) LIMIT 0", sql)
+    )
+
     geom_col <- NULL
     if ("geometry" %in% names(col_info)) {
       geom_col <- "geometry"
@@ -245,7 +278,9 @@ zs_serve_parquet <- function(
       geom_col <- "geom"
     } else {
       for (col in names(col_info)) {
-        if (inherits(col_info[[col]], "list") || inherits(col_info[[col]], "blob")) {
+        if (
+          inherits(col_info[[col]], "list") || inherits(col_info[[col]], "blob")
+        ) {
           geom_col <- col
           break
         }
@@ -264,35 +299,47 @@ zs_serve_parquet <- function(
       }
 
       if (!is.null(srid)) {
-        srid_str <- if (is.numeric(srid)) sprintf("'EPSG:%s'", srid) else sprintf("'%s'", srid)
-        sql <- sprintf("SELECT * EXCLUDE (%s), ST_Transform(ST_SetCRS(%s, %s), 'EPSG:4326') AS geometry FROM (%s)", 
-                      geom_col, geom_col, srid_str, sql)
+        srid_str <- if (is.numeric(srid)) {
+          sprintf("'EPSG:%s'", srid)
+        } else {
+          sprintf("'%s'", srid)
+        }
+        sql <- sprintf(
+          "SELECT * EXCLUDE (%s), ST_Transform(ST_SetCRS(%s, %s), 'EPSG:4326') AS geometry FROM (%s)",
+          geom_col,
+          geom_col,
+          srid_str,
+          sql
+        )
       } else {
-        sql <- sprintf("SELECT * EXCLUDE (%s), ST_SetCRS(%s, 'EPSG:4326') AS geometry FROM (%s)", 
-                      geom_col, geom_col, sql)
+        sql <- sprintf(
+          "SELECT * EXCLUDE (%s), ST_SetCRS(%s, 'EPSG:4326') AS geometry FROM (%s)",
+          geom_col,
+          geom_col,
+          sql
+        )
       }
     }
 
     copy_sql <- sprintf("COPY (%s) TO '%s' (FORMAT PARQUET)", sql, file_path)
     DBI::dbExecute(conn, copy_sql)
-    
   } else {
     # Arrow Engine
     if (!requireNamespace("arrow", quietly = TRUE)) {
       stop("Engine 'arrow' requires the 'arrow' package.")
     }
-    
+
     # Use our robust spatial stream converter to ensure GeoArrow metadata
     # and CRS handling are consistent across the package.
     na_stream <- as_arrow_stream(data, crs = crs)
     on.exit(na_stream$release())
-    
+
     # arrow::write_parquet can write directly from a nanoarrow stream
     arrow::write_parquet(na_stream, file_path)
   }
 
   # Track temp file for cleanup
   .zeroserve_env$temp_files <- c(.zeroserve_env$temp_files, file_path)
-  
+
   zs_serve_file(file_path, layer_id)
 }

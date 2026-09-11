@@ -11,15 +11,21 @@
 as_arrow_stream <- function(x, crs = NULL) {
   # 1. If it's a duckspatial_df, get the query and connection
   if (inherits(x, "duckspatial_df")) {
-    if (!requireNamespace("duckspatial", quietly = TRUE) || !requireNamespace("dbplyr", quietly = TRUE)) {
-      stop("Input 'duckspatial_df' requires the 'duckspatial' and 'dbplyr' packages.")
+    if (
+      !requireNamespace("duckspatial", quietly = TRUE) ||
+        !requireNamespace("dbplyr", quietly = TRUE)
+    ) {
+      stop(
+        "Input 'duckspatial_df' requires the 'duckspatial' and 'dbplyr' packages."
+      )
     }
     conn <- dbplyr::remote_con(x)
     sql <- as.character(dbplyr::sql_render(x))
-    crs <- crs %||% (if (requireNamespace("sf", quietly = TRUE)) sf::st_crs(x) else NULL)
-    
+    crs <- crs %||%
+      (if (requireNamespace("sf", quietly = TRUE)) sf::st_crs(x) else NULL)
+
     # DuckDB's internal Arrow fetch (duckdb_fetch_arrow) has a bug (bad_weak_ptr)
-    # when spatial extension is loaded. 
+    # when spatial extension is loaded.
     # Fallback: Fetch as data.frame and convert.
     df <- DBI::dbGetQuery(conn, sql)
     return(as_arrow_stream(df, crs = crs))
@@ -40,7 +46,7 @@ as_arrow_stream <- function(x, crs = NULL) {
         }
       }
     }
-    
+
     # Handle spatial data only if sf is available
     if (!is.null(geom_col) && requireNamespace("sf", quietly = TRUE)) {
       # Ensure geoarrow S3 methods are registered for nanoarrow
@@ -53,7 +59,7 @@ as_arrow_stream <- function(x, crs = NULL) {
         x[[geom_col]] <- sf::st_as_sfc(unclass(x[[geom_col]]))
         x <- sf::st_as_sf(x, sf_column_name = geom_col)
       }
-      
+
       # Reproject to 4326
       if (is.na(sf::st_crs(x))) {
         sf::st_crs(x) <- crs %||% 4326
@@ -61,14 +67,14 @@ as_arrow_stream <- function(x, crs = NULL) {
       if (sf::st_crs(x) != sf::st_crs(4326)) {
         x <- sf::st_transform(x, 4326)
       }
-      
+
       # Rename to 'geometry' for consistency with JS renderer
       if (geom_col != "geometry") {
         names(x)[names(x) == geom_col] <- "geometry"
         attr(x, "sf_column") <- "geometry"
       }
     }
-    
+
     # Convert to nanoarrow stream.
     return(nanoarrow::as_nanoarrow_array_stream(x))
   }
@@ -77,7 +83,7 @@ as_arrow_stream <- function(x, crs = NULL) {
   if (inherits(x, "nanoarrow_array_stream")) {
     return(x)
   }
-  
+
   # Fallback
   return(nanoarrow::as_nanoarrow_array_stream(x))
 }
