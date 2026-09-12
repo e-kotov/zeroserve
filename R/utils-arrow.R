@@ -9,26 +9,9 @@
 #' @return A `nanoarrow_array_stream`.
 #' @noRd
 as_arrow_stream <- function(x, crs = NULL) {
-  # 1. If it's a duckspatial_df, get the query and connection
+  # 1. Delegate native geometry conversion to DuckSpatial.
   if (inherits(x, "duckspatial_df")) {
-    if (
-      !requireNamespace("duckspatial", quietly = TRUE) ||
-        !requireNamespace("dbplyr", quietly = TRUE)
-    ) {
-      stop(
-        "Input 'duckspatial_df' requires the 'duckspatial' and 'dbplyr' packages."
-      )
-    }
-    conn <- dbplyr::remote_con(x)
-    sql <- as.character(dbplyr::sql_render(x))
-    crs <- crs %||%
-      (if (requireNamespace("sf", quietly = TRUE)) sf::st_crs(x) else NULL)
-
-    # DuckDB's internal Arrow fetch (duckdb_fetch_arrow) has a bug (bad_weak_ptr)
-    # when spatial extension is loaded.
-    # Fallback: Fetch as data.frame and convert.
-    df <- DBI::dbGetQuery(conn, sql)
-    return(as_arrow_stream(df, crs = crs))
+    return(nanoarrow::as_nanoarrow_array_stream(x, native = TRUE))
   }
 
   # 2. If it's a data.frame/sf, handle geometries and reproject

@@ -4,7 +4,13 @@ Version: 0.1.0
 Authors@R: 
     person("Egor", "Kotov", , "kotov.egor@gmail.com", role = c("aut", "cre", "cph"),
            comment = c(ORCID = "0000-0001-6690-5345"))
-Description: A high-performance, frontend-agnostic transport layer that streams large datasets directly to the browser for use in htmlwidgets, Shiny apps, or custom web frontends. It leverages zero-copy Arrow IPC streams (via shared memory) or HTTP Range requests (for disk-based files) to bypass the bottlenecks of JSON serialization. While general-purpose, it provides specialized support for DuckDB, sf, and Arrow objects, bridging R memory to web visualizations with minimal overhead.
+Description: A high-performance, frontend-agnostic transport layer that serves
+    data to browsers for use in htmlwidgets, Shiny apps, or custom web
+    frontends. It provides disk-free, copy-minimized Arrow IPC transport via
+    shared memory and HTTP Range requests for disk-backed files, avoiding JSON
+    serialization. Arrow results are completely materialized in memory before
+    a URL is returned. Specialized support is provided for DuckDB,
+    DuckSpatial, sf, and Arrow objects.
 License: MIT + file LICENSE
 URL: https://github.com/e-kotov/zeroserve, https://www.ekotov.pro/zeroserve/
 BugReports: https://github.com/e-kotov/zeroserve/issues
@@ -23,7 +29,7 @@ Suggests:
     arrow,
     sf,
     duckdb,
-    duckspatial,
+    duckspatial (> 1.2.1),
     geoarrow,
     dbplyr,
     dplyr,
@@ -34,3 +40,5 @@ Suggests:
     testthat (>= 3.0.0)
 VignetteBuilder: quarto
 Config/testthat/edition: 3
+Remotes:
+    Cidree/duckspatial@0c193c78323d7bdcf48461b2e673177d10ce7378

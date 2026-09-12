@@ -11,13 +11,13 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-`zeroserve` provides a high-performance transport layer for streaming large datasets from R to web frontends. It is designed to be frontend-agnostic and supports various data formats and sources.
+`zeroserve` provides a high-performance transport layer for serving data from R to web frontends. It is frontend-agnostic and supports various data formats and sources.
 
 ## Core Concepts
 
 The package focuses on two main methods of serving data:
 
-1.  **Arrow IPC Streams:** Best for in-memory data that should be shared with minimal overhead using shared memory.
+1.  **Arrow IPC Streams:** Disk-free, copy-minimized transport for data that fits in R, Mori shared memory, and browser memory. The complete result is serialized before the URL is returned.
 2.  **Parquet Files:** Best for larger-than-memory data or data already on disk, served via HTTP with support for range requests.
 
 ## Basic Usage
@@ -45,6 +45,35 @@ cat("Fetched", length(res$content), "bytes of Arrow IPC data\n")
 # Clean up when done
 zs_stop_server()
 ```
+
+### Serving native DuckSpatial GeoArrow to MapGL
+
+DuckSpatial stays lazy until `zs_serve_arrow()` requests its native GeoArrow stream. ZeroServe then materializes the complete Arrow IPC result in memory and exposes it over HTTP without creating a temporary Arrow payload file.
+
+```{r}
+#| eval: false
+library(duckspatial)
+library(zeroserve)
+library(mapgl)
+library(deckglgeoarrow)
+
+countries <- ddbs_open_dataset(
+  system.file("spatial/countries.geojson", package = "duckspatial")
+)
+
+url <- zs_serve_arrow(countries, layer_id = "countries")
+
+maplibre(projection = "mercator") |>
+  addSource(id = "countries", url = url) |>
+  addGeoArrowPolygonLayer(
+    source = "countries",
+    layer_id = "countries",
+    geom_column_name = attr(countries, "sf_column"),
+    tooltip = "NAME_ENGL"
+  )
+```
+
+This URL route differs from `geoarrowWidget(data =)`, which writes an attachment file. Map renderers expect longitude/latitude coordinates; apply any needed transform lazily in DuckSpatial before calling `zs_serve_arrow()`. For results too large to fit comfortably in memory, filter or aggregate first, or use disk-backed `zs_serve_parquet()`/`zs_serve_file()` when the frontend supports those formats.
 
 ### Serving a Parquet File
 

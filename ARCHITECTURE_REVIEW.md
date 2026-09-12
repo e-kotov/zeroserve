@@ -31,7 +31,10 @@ The main R process communicates with the background server using standard HTTP r
 3. **Cleanup:** `GET /__zs__/clear` flushes the registry and triggers deletion of temporary files.
 
 ## Performance Features
-- **Zero-Copy Transport:** For Arrow data, `mori` shared-memory pointers are served directly to the HTTP stream.
+- **Copy-Minimized Transport:** The complete Arrow IPC stream is serialized to
+  an R raw vector before `mori` shares that buffer with the background server.
+  This avoids JSON and an additional R-process copy, but it is not end-to-end
+  zero-copy or out-of-core transport.
 - **Range Support:** Robust support for HTTP `Range` requests (RFC 7233) allows clients to fetch specific byte ranges of Parquet files (essential for DuckDB `httpfs`).
 - **OOM Protection:** Automatic capping of response chunk sizes prevents memory exhaustion when serving extremely large files over poor connections.
 - **CORS Support:** Full support for `OPTIONS` preflight and standard CORS headers ensures seamless integration with modern web browsers.

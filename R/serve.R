@@ -61,7 +61,11 @@ zs_serve_arrow <- function(x, query = NULL, layer_id = "stream", crs = NULL) {
 }
 
 .zs_is_duckdb_arrow_input <- function(x) {
-  if (inherits(x, "duckdb_connection") || inherits(x, "duckspatial_df")) {
+  if (inherits(x, "duckspatial_df")) {
+    return(FALSE)
+  }
+
+  if (inherits(x, "duckdb_connection")) {
     return(TRUE)
   }
 

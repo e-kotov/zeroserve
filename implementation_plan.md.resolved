@@ -1,0 +1,232 @@
+# ZeroServe implementation plan
+
+Updated 2026-09-12 after implementing the native GeoArrow fixes in DuckSpatial
+and deckglgeoarrow.
+
+## 1. Current state
+
+### External integration work implemented, awaiting upstream merge
+
+1. [DuckSpatial PR #150](https://github.com/Cidree/duckspatial/pull/150)
+   fixes `nanoarrow::as_nanoarrow_array_stream(x, native = TRUE)`. It now casts
+   DuckSpatial's WKB geometry column to a native GeoArrow Point, LineString, or
+   Polygon-family layout and preserves DuckSpatial's CRS metadata. The PR is
+   open against `dev` and currently mergeable.
+2. [deckglgeoarrow PR #19](https://github.com/r-spatial/deckglgeoarrow/pull/19)
+   recognizes `duckspatial_df` and delegates conversion to DuckSpatial with
+   `native = TRUE`. The PR is open against `main` and currently mergeable.
+
+Together these PRs already provide the direct mapping route:
+
+```text
+lazy duckspatial_df
+  -> deckglgeoarrow requests native = TRUE
+  -> DuckSpatial executes the query and returns native GeoArrow
+  -> geoarrowWidget attaches the Arrow data
+  -> Deck.gl renders it in a MapGL map
+```
+
+ZeroServe is not needed for that direct route and must not duplicate its class
+conversion or mapping logic.
+
+### ZeroServe server hardening implemented locally
+
+Commit `926a69b` on `feat/ipc-server-hardening` implements the practical server
+hardening work: robust single-range parsing, bounded chunks, `OPTIONS` and
+`HEAD`, CORS headers, `Content-Length`, graceful IPC status checks, and temporary
+file cleanup. This commit is local work pending integration into `main`.
+
+One architectural cleanup remains: the data request handler still exists both
+inside the `callr` process closure and as `.handle_data_request()` for tests.
+The two copies should eventually be generated from one source or covered by a
+parity test. This is separate from DuckSpatial integration.
+
+One security hardening item also remains from the completed server plan:
+`start_server()` still creates its control-plane token with
+`rlang::hash(runif(1))`, which depends on R's predictable global RNG. Replace it
+with a token containing at least 256 bits from an operating-system-backed
+cryptographically secure random source. Keep the token transient and confined
+to the parent and background server processes. This is separate from
+DuckSpatial integration and should be implemented in a focused server change.
+
+## 2. Architectural boundary
+
+ZeroServe owns transport only:
+
+- serialize an Arrow IPC stream;
+- keep the serialized buffer alive through `mori`;
+- expose it at a localhost HTTP URL with browser-compatible CORS;
+- serve disk files with HTTP Range support.
+
+Other packages retain their existing responsibilities:
+
+- DuckSpatial owns lazy query execution, geometry type detection, WKB-to-native
+  GeoArrow conversion, and CRS metadata;
+- deckglgeoarrow owns layer/source integration and requests the representation
+  required by Deck.gl;
+- geoarrowWidget owns widget data attachment and browser dependencies;
+- MapGL owns the MapLibre/Mapbox map.
+
+Therefore ZeroServe should delegate a `duckspatial_df` to DuckSpatial's public
+nanoarrow S3 method. It should not inspect DuckSpatial SQL, guess geometry
+columns, collect through `DBI::dbGetQuery()`, convert through `sf`, or contain
+Deck.gl styling code.
+
+## 3. Remaining DuckSpatial integration
+
+Implement this only after DuckSpatial PR #150 is merged, or test against its
+feature branch until then.
+
+### Phase A — use DuckSpatial's native stream
+
+Modify `R/utils-arrow.R`:
+
+```r
+if (inherits(x, "duckspatial_df")) {
+  return(nanoarrow::as_nanoarrow_array_stream(x, native = TRUE))
+}
+```
+
+Remove the current DuckSpatial-specific `dbplyr::remote_con()`,
+`dbplyr::sql_render()`, `DBI::dbGetQuery()`, recursive data-frame conversion,
+and the obsolete `bad_weak_ptr` fallback comment. Those steps eagerly collect
+the result and bypass DuckSpatial's native GeoArrow implementation.
+
+Modify `R/serve.R` so `.zs_is_duckdb_arrow_input()` does not classify
+`duckspatial_df` as the generic DuckDB Arrow route. A `duckspatial_df` must pass
+through `as_arrow_stream()` instead. Keep the generic DuckDB connection and
+DuckDB-backed `tbl_sql` path unchanged; it serves a different, non-DuckSpatial
+contract.
+
+Do not add MapGL, deckglgeoarrow, or geoarrowWidget as dependencies. Keep
+DuckSpatial optional in `Suggests`; no explicit `requireNamespace()` is needed
+inside this branch because a live `duckspatial_df` already comes from an active
+DuckSpatial installation and nanoarrow performs S3 dispatch.
+
+### Phase B — replace the superficial test
+
+The existing test creates a non-spatial table, gives it a `duckspatial_df`
+class, and verifies only ordinary columns. It cannot detect the WKB/native
+GeoArrow bug.
+
+Replace it with two focused tests:
+
+1. A dispatch test, following deckglgeoarrow PR #19's pattern, registers a
+   unique fake subclass method whose default is `native = FALSE`. It verifies
+   that ZeroServe requests `native = TRUE` and does not route the object through
+   the generic DuckDB/Arrow code.
+2. An end-to-end test uses small real spatial data from DuckSpatial, calls
+   `zs_serve_arrow()`, downloads the served IPC stream, and inspects the geometry
+   child's `ARROW:extension:name`. Assert the exact expected native type, for
+   example `geoarrow.point` or `geoarrow.multipolygon`, rather than merely
+   checking `^geoarrow\\.`. Also verify ordinary attribute columns survive.
+
+The end-to-end test should skip cleanly when optional packages are unavailable.
+It must use bundled, small data so it is deterministic and does not access the
+network.
+
+### Phase C — document the URL-based route
+
+Add one concise example to the ZeroServe vignette after the implementation is
+green. It should demonstrate the role ZeroServe adds, rather than repeat the
+direct object route:
+
+```r
+library(duckspatial)
+library(zeroserve)
+library(mapgl)
+library(deckglgeoarrow)
+
+countries <- ddbs_open_dataset(
+  system.file("spatial/countries.geojson", package = "duckspatial")
+)
+
+url <- zs_serve_arrow(countries, layer_id = "countries")
+
+maplibre(projection = "mercator") |>
+  addSource(id = "countries", url = url) |>
+  addGeoArrowPolygonLayer(
+    source = "countries",
+    layer_id = "countries",
+    geom_column_name = attr(countries, "sf_column"),
+    tooltip = "NAME_ENGL"
+  )
+```
+
+For web maps, the query must produce longitude/latitude coordinates in the CRS
+expected by the renderer. ZeroServe must not silently collect through `sf` just
+to reproject; users should apply the transform lazily in DuckSpatial before
+serving when needed.
+
+## 4. Memory and performance truth
+
+Use precise terminology in documentation:
+
+- DuckSpatial stays lazy until `zs_serve_arrow()` requests its stream.
+- `zs_serve_arrow()` then executes the query and serializes the complete IPC
+  stream into an R raw vector before sharing that buffer with the background
+  server through `mori`.
+- The HTTP server avoids JSON and avoids another R-process copy, but this is not
+  end-to-end zero-copy and is not an out-of-core browser pipeline.
+- For results too large to fit comfortably in RAM/browser memory, filter or
+  aggregate in DuckSpatial first. Use `zs_serve_parquet()`/`zs_serve_file()` for
+  disk-backed transport where the consuming frontend supports that format.
+
+Do not advertise ZeroServe as making an arbitrarily large lazy query safe to
+render. Query pushdown reduces the input; it does not remove the final
+materialization required by the browser.
+
+## 5. Commit and merge order
+
+1. Merge or otherwise integrate ZeroServe commit `926a69b` into ZeroServe
+   `main`; keep server hardening separate from the spatial adapter.
+2. Merge DuckSpatial PR #150 into DuckSpatial `dev`.
+3. Merge deckglgeoarrow PR #19 after its upstream workflow is approved. It
+   should continue to depend only on DuckSpatial's public nanoarrow behavior,
+   without adding DuckSpatial to `Imports` or `Suggests`.
+4. Create a fresh ZeroServe branch from updated `main`, for example
+   `feat/duckspatial-native-geoarrow`, containing only Phases A and B.
+5. Add the vignette example in the same ZeroServe PR only if the integration
+   test passes with the released or installable upstream revisions.
+
+No changes are required in geoarrowWidget or MapGL for this integration.
+
+## 6. Acceptance criteria
+
+- `zs_serve_arrow(duckspatial_df)` calls
+  `nanoarrow::as_nanoarrow_array_stream(..., native = TRUE)`.
+- The DuckSpatial query is not collected through `DBI::dbGetQuery()` or `sf`.
+- A real Point/LineString/Polygon-family test reads the served IPC and observes
+  the exact native `geoarrow.*` extension expected for that fixture.
+- Attribute columns and CRS extension metadata survive serialization and HTTP
+  download.
+- Existing `sf`, ordinary data-frame, nanoarrow stream, DuckDB connection, and
+  DuckDB-backed lazy-table tests continue to pass.
+- The URL returned by ZeroServe can be supplied to
+  `deckglgeoarrow::addSource(url = ...)` and rendered in a MapGL map over HTTP
+  without `file://` CORS failures.
+- ZeroServe gains no mapping dependencies and contains no layer styling logic.
+
+For the separate server-security follow-up:
+
+- IPC control tokens no longer depend on `runif()`, `sample()`, or other R
+  global-RNG output.
+- Each server start generates a new token with at least 256 bits of entropy
+  from an operating-system-backed cryptographically secure random source.
+- Existing authenticated control-plane operations and server lifecycle tests
+  continue to pass.
+
+## 7. Verification
+
+Run the package's normal checks after Phases A and B:
+
+```bash
+Rscript -e 'devtools::test()'
+R CMD build .
+R CMD check --no-manual zeroserve_*.tar.gz
+```
+
+Then manually run the URL-based example above in a fresh R session, open it in
+an external browser over HTTP, and verify that the polygons and tooltip render
+without console errors. Keep any unrelated transient MapLibre hover issue out
+of this PR; if reproducible, it belongs in a separate deckglgeoarrow change.

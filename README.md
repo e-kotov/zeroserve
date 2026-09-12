@@ -14,15 +14,15 @@ experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](h
 [![codecov](https://codecov.io/gh/e-kotov/zeroserve/branch/main/graph/badge.svg)](https://app.codecov.io/gh/e-kotov/zeroserve)
 <!-- badges: end -->
 
-A high-performance, frontend-agnostic transport layer that streams large
-datasets directly to the browser for use in `htmlwidgets`, `Shiny` apps,
-or custom web frontends.
+A high-performance, frontend-agnostic transport layer that serves data
+to browsers for use in `htmlwidgets`, `Shiny` apps, or custom web
+frontends.
 
-`zeroserve` leverages zero-copy **Arrow IPC** streams (via shared
-memory) or **HTTP Range requests** (for disk-based files) to bypass the
-bottlenecks of JSON serialization. While general-purpose, it provides
-specialized support for DuckDB, sf, and Arrow objects, bridging R memory
-to web visualizations with minimal overhead.
+`zeroserve` provides disk-free, copy-minimized **Arrow IPC** transport
+(via shared memory) or **HTTP Range requests** for disk-backed files.
+Arrow inputs are serialized to one in-memory IPC buffer and copied once
+into Mori shared memory; the complete result is materialized before the
+URL is returned.
 
 ## Installation
 
@@ -37,8 +37,8 @@ pak::pak("e-kotov/zeroserve")
 
 ### Serving an Arrow Stream (In-Memory)
 
-Serve an `sf` object directly from R memory to a local URL with zero
-copies.
+Serve an `sf` object from R memory at a local URL without a temporary
+Arrow payload file.
 
 ``` r
 library(zeroserve)
@@ -50,6 +50,30 @@ nc <- sf::st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
 url <- zs_serve_arrow(nc)
 # [1] "http://127.0.0.1:8080/stream.arrow"
 ```
+
+DuckSpatial queries use their native GeoArrow stream. The URL-based
+integration avoids a data attachment file:
+
+``` r
+countries <- duckspatial::ddbs_open_dataset(
+  system.file("spatial/countries.geojson", package = "duckspatial")
+)
+url <- zs_serve_arrow(countries, layer_id = "countries")
+
+mapgl::maplibre(projection = "mercator") |>
+  deckglgeoarrow::addSource(id = "countries", url = url) |>
+  deckglgeoarrow::addGeoArrowPolygonLayer(
+    source = "countries",
+    layer_id = "countries",
+    geom_column_name = attr(countries, "sf_column"),
+    tooltip = "NAME_ENGL"
+  )
+```
+
+In contrast, passing an object through `geoarrowWidget(data =)` writes
+an attachment file. For web maps, transform coordinates lazily in
+DuckSpatial to the longitude/latitude CRS expected by the renderer
+before serving.
 
 ### Serving a Parquet File (Out-of-Core)
 
@@ -73,9 +97,10 @@ url <- zs_serve_parquet(con, "SELECT * FROM massive_table")
     spawns a lightweight background R process (via `{callr}`) running an
     `{httpuv}` server.
 2.  **The Data:**
-    - For **Arrow**, data is shared via POSIX shared memory (using
-      `{mori}`), allowing the background server to read R’s memory with
-      zero overhead.
+    - For **Arrow**, the complete result is serialized into an R raw
+      vector, copied once into POSIX shared memory using `{mori}`, and
+      retained for the URL lifetime. The background server maps that
+      shared buffer without another parent-to-server R copy.
     - For **Parquet**, data is written to a temporary file, which the
       server then hosts with support for partial content requests.
 3.  **The Lifecycle:** The background server and its associated

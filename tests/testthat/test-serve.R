@@ -166,34 +166,109 @@ test_that("zs_serve_arrow handles DuckDB-backed dbplyr tables", {
   expect_equal(res$b, letters[1:5])
 })
 
-test_that("zs_serve_arrow handles duckspatial_df inputs", {
+test_that("zs_serve_arrow requests native DuckSpatial streams", {
   skip_if_not_installed("httpuv")
   skip_if_not_installed("curl")
   skip_if_not_installed("nanoarrow")
-  skip_if_not_installed("duckdb")
-  skip_if_not_installed("DBI")
-  skip_if_not_installed("arrow")
-  skip_if_not_installed("dbplyr")
-  skip_if_not_installed("dplyr")
-  skip_if_not_installed("duckspatial")
 
-  con <- DBI::dbConnect(duckdb::duckdb(), ":memory:")
-  on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
-
-  df <- data.frame(a = 1:5, b = letters[1:5])
-  DBI::dbWriteTable(con, "test_table", df)
-  tbl <- duckspatial::as_duckspatial_df(
-    dplyr::tbl(con, "test_table"),
-    crs = 4326
+  calls <- new.env(parent = emptyenv())
+  calls$native <- NULL
+  as_nanoarrow_array_stream.fake_duckspatial_df <- function(
+    x,
+    ...,
+    native = FALSE
+  ) {
+    calls$native <- native
+    nanoarrow::as_nanoarrow_array_stream(data.frame(a = x$a, b = x$b))
+  }
+  registerS3method(
+    "as_nanoarrow_array_stream",
+    "fake_duckspatial_df",
+    as_nanoarrow_array_stream.fake_duckspatial_df,
+    envir = asNamespace("nanoarrow")
   )
 
-  url <- zs_serve_arrow(tbl, layer_id = "test_duckspatial_df")
-  expect_match(url, "^http://127.0.0.1:[0-9]+/test_duckspatial_df\\.arrow$")
+  x <- structure(
+    data.frame(a = 1:5, b = letters[1:5]),
+    class = c("fake_duckspatial_df", "duckspatial_df", "data.frame")
+  )
+  url <- zs_serve_arrow(x, layer_id = "test_duckspatial_dispatch")
+  expect_match(
+    url,
+    "^http://127.0.0.1:[0-9]+/test_duckspatial_dispatch\\.arrow$"
+  )
+  expect_identical(calls$native, TRUE)
 
   stream <- expect_arrow_download(url)
   res <- as.data.frame(stream)
   expect_equal(res$a, 1:5)
   expect_equal(res$b, letters[1:5])
+})
+
+test_that("zs_serve_arrow preserves native DuckSpatial GeoArrow data", {
+  skip_if_not_installed("duckspatial")
+  skip_if_not_installed("curl")
+  skip_if_not_installed("nanoarrow")
+
+  countries <- duckspatial::ddbs_open_dataset(
+    system.file("spatial/countries.geojson", package = "duckspatial")
+  )
+  geom_col <- attr(countries, "sf_column")
+  native_stream <- nanoarrow::as_nanoarrow_array_stream(
+    countries,
+    native = TRUE
+  )
+  native_geom_schema <- native_stream$get_schema()$children[[geom_col]]
+  expected_crs_metadata <- native_geom_schema$metadata[[
+    "ARROW:extension:metadata"
+  ]]
+  native_stream$release()
+  temp_files <- .zeroserve_env$temp_files
+
+  url <- zs_serve_arrow(countries, layer_id = "duckspatial_countries")
+  response <- curl::curl_fetch_memory(url)
+
+  expect_equal(response$status_code, 200L)
+  expect_equal(.zeroserve_env$temp_files, temp_files)
+  expect_identical(
+    mori::is_shared(.zeroserve_env$mori_buffers$duckspatial_countries),
+    TRUE
+  )
+
+  con <- rawConnection(response$content)
+  on.exit(close(con), add = TRUE)
+  stream <- nanoarrow::read_nanoarrow(con)
+  on.exit(stream$release(), add = TRUE)
+  schema <- stream$get_schema()
+  geom_schema <- schema$children[[geom_col]]
+
+  expect_equal(
+    geom_schema$metadata[["ARROW:extension:name"]],
+    "geoarrow.polygon"
+  )
+  expect_named(
+    geom_schema$metadata,
+    c("ARROW:extension:name", "ARROW:extension:metadata")
+  )
+  expect_equal(
+    geom_schema$metadata[["ARROW:extension:metadata"]],
+    expected_crs_metadata
+  )
+  expect_named(
+    schema$children,
+    c(
+      "OGC_FID",
+      "CNTR_ID",
+      "NAME_ENGL",
+      "ISO3_CODE",
+      "CNTR_NAME",
+      "FID",
+      "date",
+      "geom"
+    )
+  )
+  result <- as.data.frame(stream)
+  expect_equal(result$NAME_ENGL[[1]], "Argentina")
 })
 
 test_that("zs_serve_arrow requires query for DuckDB connections", {

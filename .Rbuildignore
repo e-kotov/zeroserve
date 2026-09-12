@@ -1,13 +1,12 @@
 ^zeroserve\.Rproj$
 ^\.Rproj\.user$
 ^private$
-^conductor$
 ^R_drafts$
 ^roadmap\.md$
 ^name_analysis\.md$
 ^AGENTS\.md$
+^implementation_plan\.md\.resolved$
 ^\.gemini/
-^conductor/.*
 ^R_drafts/.*
 ^_pkgdown\.yml$
 ^docs$
