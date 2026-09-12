@@ -159,7 +159,7 @@ zs_server_logs(n = 10)
 
 ## Next Steps
 
-For more information, please refer to the function documentation or the [Architecture Review](https://github.com/e-kotov/zeroserve/blob/main/ARCHITECTURE_REVIEW.md).
+For more information, please refer to the function documentation.
 
 ```{r}
 # Clean up
