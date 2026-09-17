@@ -1,10 +1,25 @@
-# Served URLs carry an unguessable per-session capability token as the first
+# Served URLs carry an unguessable per-resource capability token as the first
 # path segment: http://127.0.0.1:<port>/<32 hex chars>/<layer>.<ext>
 expect_zs_url <- function(url, path_regex) {
   expect_match(
     url,
     paste0("^http://127\\.0\\.0\\.1:[0-9]+/[0-9a-f]{32}/", path_regex, "$")
   )
+}
+
+zs_token <- function(url) sub("^.*/([0-9a-f]{32})/[^/]*$", "\\1", url)
+
+# Every data-plane rejection must look like this on the wire, whatever the
+# reason: no token, a malformed one, one belonging to another resource, an
+# unknown path, or a resource whose backing file is gone.
+expect_uniform_404 <- function(res) {
+  expect_equal(res$status_code, 404L)
+  expect_equal(rawToChar(res$content), "Not Found")
+  expect_false(any(grepl(
+    "Access-Control-",
+    curl::parse_headers(res$headers),
+    ignore.case = TRUE
+  )))
 }
 
 expect_arrow_download <- function(url) {
@@ -696,7 +711,7 @@ test_that("open-ended range requests work", {
 zs_stop_server()
 zs_clear_registry()
 
-test_that("data plane requires the capability token", {
+test_that("data plane requires the per-resource capability token", {
   skip_if_not_installed("httpuv")
   skip_if_not_installed("curl")
 
@@ -706,7 +721,7 @@ test_that("data plane requires the capability token", {
   url <- zs_serve_file(temp_f, layer_id = "test_token_auth")
   expect_zs_url(url, "test_token_auth\\.txt")
 
-  token <- .zeroserve_env$data_token
+  token <- zs_token(url)
   expect_match(token, "^[0-9a-f]{32}$")
 
   # The tokenised URL still serves the payload byte for byte.
@@ -759,6 +774,29 @@ test_that("data plane requires the capability token", {
     curl::parse_headers(res_bare$headers),
     ignore.case = TRUE
   )))
+
+  # A first segment that is not exactly 32 lowercase hex characters must miss
+  # before the registry is ever consulted.
+  malformed <- c(
+    toupper(token), # uppercase hex
+    substr(token, 1L, 31L), # too short
+    paste0(token, "a"), # too long
+    "" # "//test_token_auth.txt"
+  )
+  for (seg in malformed) {
+    res_mal <- curl::curl_fetch_memory(sprintf(
+      "http://127.0.0.1:%s/%s/test_token_auth.txt",
+      .zeroserve_env$port,
+      seg
+    ))
+    expect_uniform_404(res_mal)
+  }
+
+  # All of them, plus the wrong-token and bare-path cases above, are the same
+  # response byte for byte.
+  expect_uniform_404(res_bad)
+  expect_uniform_404(res_bare)
+  expect_uniform_404(res_unknown)
 })
 
 test_that("Range requests work through the tokenised URL", {
@@ -778,4 +816,160 @@ test_that("Range requests work through the tokenised URL", {
   expect_equal(rawToChar(res$content), "2345")
   headers <- curl::parse_headers_list(res$headers)
   expect_equal(headers[["content-range"]], "bytes 2-5/10")
+})
+
+test_that("each resource gets its own capability token", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+
+  temp_a <- tempfile(fileext = ".txt")
+  temp_b <- tempfile(fileext = ".txt")
+  writeBin(charToRaw("payload A"), temp_a)
+  writeBin(charToRaw("payload BB"), temp_b)
+
+  url_a <- zs_serve_file(temp_a, layer_id = "tok_a")
+  url_b <- zs_serve_file(temp_b, layer_id = "tok_b")
+
+  token_a <- zs_token(url_a)
+  token_b <- zs_token(url_b)
+  expect_match(token_a, "^[0-9a-f]{32}$")
+  expect_match(token_b, "^[0-9a-f]{32}$")
+  expect_false(identical(token_a, token_b))
+
+  # Registering B must not have disturbed A.
+  expect_equal(rawToChar(curl::curl_fetch_memory(url_a)$content), "payload A")
+  expect_equal(rawToChar(curl::curl_fetch_memory(url_b)$content), "payload BB")
+
+  # A leaked URL is a capability for one resource only: A's token cannot read
+  # B's path, or the other way round.
+  expect_uniform_404(curl::curl_fetch_memory(sprintf(
+    "http://127.0.0.1:%s/%s/tok_b.txt",
+    .zeroserve_env$port,
+    token_a
+  )))
+  expect_uniform_404(curl::curl_fetch_memory(sprintf(
+    "http://127.0.0.1:%s/%s/tok_a.txt",
+    .zeroserve_env$port,
+    token_b
+  )))
+})
+
+test_that("re-serving a layer_id revokes the previous URL", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+
+  temp_1 <- tempfile(fileext = ".txt")
+  temp_2 <- tempfile(fileext = ".txt")
+  writeBin(charToRaw("first"), temp_1)
+  writeBin(charToRaw("second"), temp_2)
+
+  url_1 <- zs_serve_file(temp_1, layer_id = "rotate")
+  expect_equal(rawToChar(curl::curl_fetch_memory(url_1)$content), "first")
+
+  url_2 <- zs_serve_file(temp_2, layer_id = "rotate")
+  expect_false(identical(url_1, url_2))
+  expect_false(identical(zs_token(url_1), zs_token(url_2)))
+
+  expect_equal(rawToChar(curl::curl_fetch_memory(url_2)$content), "second")
+  expect_uniform_404(curl::curl_fetch_memory(url_1))
+})
+
+test_that("OPTIONS preflight is gated on the capability token", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+
+  temp_f <- tempfile(fileext = ".txt")
+  writeBin(charToRaw("preflight"), temp_f)
+  url <- zs_serve_file(temp_f, layer_id = "test_preflight_gate")
+  token <- zs_token(url)
+
+  options_fetch <- function(target) {
+    h <- curl::new_handle()
+    curl::handle_setopt(h, customrequest = "OPTIONS")
+    curl::curl_fetch_memory(target, handle = h)
+  }
+
+  # The preflight a real client sends: the tokenised URL it was handed.
+  res_ok <- options_fetch(url)
+  expect_equal(res_ok$status_code, 204L)
+  expect_true(any(grepl(
+    "Access-Control-Allow-Methods",
+    curl::parse_headers(res_ok$headers),
+    ignore.case = TRUE
+  )))
+
+  # A token-less, unknown or mistokenised preflight must not confirm that a
+  # zeroserve instance is listening on this port.
+  probes <- c(
+    sprintf("http://127.0.0.1:%s/test_preflight_gate.txt", .zeroserve_env$port),
+    sprintf("http://127.0.0.1:%s/", .zeroserve_env$port),
+    sprintf(
+      "http://127.0.0.1:%s/%s/no_such_layer.txt",
+      .zeroserve_env$port,
+      token
+    ),
+    sprintf(
+      "http://127.0.0.1:%s/%s/test_preflight_gate.txt",
+      .zeroserve_env$port,
+      strrep("0", 32L)
+    )
+  )
+  for (probe in probes) {
+    expect_uniform_404(options_fetch(probe))
+  }
+})
+
+test_that("served data carries Referrer-Policy: no-referrer", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+
+  temp_f <- tempfile(fileext = ".bin")
+  writeBin(charToRaw("0123456789"), temp_f)
+  url <- zs_serve_file(temp_f, layer_id = "test_referrer_policy")
+
+  res_200 <- curl::curl_fetch_memory(url)
+  expect_equal(res_200$status_code, 200L)
+  expect_equal(
+    curl::parse_headers_list(res_200$headers)[["referrer-policy"]],
+    "no-referrer"
+  )
+
+  h <- curl::new_handle()
+  curl::handle_setheaders(h, Range = "bytes=0-3")
+  res_206 <- curl::curl_fetch_memory(url, handle = h)
+  expect_equal(res_206$status_code, 206L)
+  expect_equal(
+    curl::parse_headers_list(res_206$headers)[["referrer-policy"]],
+    "no-referrer"
+  )
+})
+
+test_that("a missing backing file gets the uniform 404 and a log line", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+
+  temp_f <- tempfile(fileext = ".txt")
+  writeBin(charToRaw("about to vanish"), temp_f)
+  url <- zs_serve_file(temp_f, layer_id = "test_vanished_file")
+  expect_equal(curl::curl_fetch_memory(url)$status_code, 200L)
+
+  unlink(temp_f)
+  res_gone <- curl::curl_fetch_memory(url)
+
+  # Byte-identical to a wrong-token rejection, so the response is not an oracle
+  # for whether the resource was ever registered.
+  expect_uniform_404(res_gone)
+  res_bad_token <- curl::curl_fetch_memory(sub(
+    zs_token(url),
+    strrep("f", 32L),
+    url,
+    fixed = TRUE
+  ))
+  expect_equal(res_gone$status_code, res_bad_token$status_code)
+  expect_equal(rawToChar(res_gone$content), rawToChar(res_bad_token$content))
+
+  # The case stays debuggable through the log, which must not leak the token.
+  logs <- paste(zs_server_logs(50), collapse = "\n")
+  expect_match(logs, "Backing file gone", fixed = TRUE)
+  expect_false(grepl(zs_token(url), logs, fixed = TRUE))
 })

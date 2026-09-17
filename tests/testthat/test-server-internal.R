@@ -42,9 +42,53 @@ test_that(".handle_data_request handles 404 for missing file on disk", {
   req <- list(PATH_INFO = "/test", HTTP_RANGE = NULL)
   res <- zeroserve:::.handle_data_request(req, res_def, log_file)
 
-  expect_equal(res$status, 404L)
-  expect_equal(res$body, "File Not Found")
-  expect_equal(res$headers[["Access-Control-Allow-Origin"]], "*")
+  # The uniform data-plane rejection: no body and no header may distinguish it
+  # from a wrong-token 404. Drift here or in the inline handler fails one of
+  # this and the live-server test in test-serve.R.
+  expect_identical(
+    res,
+    list(status = 404L, headers = list(), body = "Not Found")
+  )
+
+  # Kept debuggable through the log instead.
+  expect_match(
+    paste(readLines(log_file, warn = FALSE), collapse = "\n"),
+    "Backing file gone",
+    fixed = TRUE
+  )
+})
+
+test_that(".handle_data_request returns the uniform 404 for an unknown type", {
+  res <- zeroserve:::.handle_data_request(
+    list(PATH_INFO = "/test"),
+    list(type = "not_a_real_type"),
+    tempfile(fileext = ".log")
+  )
+
+  expect_identical(
+    res,
+    list(status = 404L, headers = list(), body = "Not Found")
+  )
+})
+
+test_that(".handle_data_request sets Referrer-Policy on served data", {
+  temp_f <- tempfile(fileext = ".txt")
+  writeBin(charToRaw("0123456789"), temp_f)
+  res_def <- list(type = "file", path = temp_f)
+
+  res_200 <- zeroserve:::.handle_data_request(
+    list(REQUEST_METHOD = "GET", PATH_INFO = "/test", HTTP_RANGE = NULL),
+    res_def,
+    tempfile()
+  )
+  expect_equal(res_200$headers[["Referrer-Policy"]], "no-referrer")
+
+  res_206 <- zeroserve:::.handle_data_request(
+    list(PATH_INFO = "/test", HTTP_RANGE = "bytes=0-3"),
+    res_def,
+    tempfile()
+  )
+  expect_equal(res_206$headers[["Referrer-Policy"]], "no-referrer")
 })
 
 test_that(".handle_data_request handles robust range requests", {
@@ -130,8 +174,8 @@ test_that(".zs_urandom_bytes reads the system CSPRNG", {
   skip_if_not(file.exists("/dev/urandom"), "no /dev/urandom on this platform")
 
   # Regression guard: file("/dev/urandom", "rb") without `raw = TRUE` signals a
-  # "not a regular file" warning, which silently downgraded every token to the
-  # weak fallback.
+  # "not a regular file" warning, which silently diverted every token away from
+  # the system CSPRNG.
   bytes <- zeroserve:::.zs_urandom_bytes(16L)
   expect_true(is.raw(bytes))
   expect_length(bytes, 16L)
@@ -146,7 +190,9 @@ test_that(".zs_random_token leaves the caller's RNG stream untouched", {
 })
 
 test_that(".zs_random_token returns unpredictable hex tokens", {
-  token <- zeroserve:::.zs_random_token()
+  # There is no weak fallback left, so a token is never accompanied by a
+  # "no cryptographic random source" warning.
+  expect_warning(token <- zeroserve:::.zs_random_token(), regexp = NA)
   expect_match(token, "^[0-9a-f]{32}$")
   expect_false(identical(token, zeroserve:::.zs_random_token()))
 

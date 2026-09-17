@@ -115,10 +115,12 @@ browser should use:
 options(zeroserve.base_url = "https://analysis.example.org/zeroserve")
 ```
 
-Served URLs also carry an unguessable per-session token as their first path
-segment, so that other pages in the same browser cannot read the data. Always
-pass the URL returned by `zs_serve_*()` around instead of rebuilding it by hand.
-See `?"zeroserve-options"`.
+Served URLs also carry an unguessable token as their first path segment, so that
+other pages in the same browser cannot read the data. The token is per resource,
+so a leaked URL exposes at most that one resource, and it is revoked by
+`zs_clear_registry()`, by `zs_stop_server()`, or by serving the same `layer_id`
+again. Always pass the URL returned by `zs_serve_*()` around instead of
+rebuilding it by hand. See `?"zeroserve-options"`.
 
 ## How it works
 

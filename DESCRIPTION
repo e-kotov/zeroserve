@@ -19,6 +19,7 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Imports:
     nanoarrow,
+    openssl,
     mori (>= 0.2.0),
     httpuv,
     rlang,
@@ -37,7 +38,6 @@ Suggests:
     knitr,
     rmarkdown,
     quarto,
-    openssl,
     rstudioapi,
     testthat (>= 3.0.0)
 VignetteBuilder: quarto

@@ -40,35 +40,30 @@ NULL
   # Portable and dependency-free on macOS, Linux and other unices.
   bytes <- .zs_urandom_bytes(n_bytes)
 
-  # Windows, or a system without /dev/urandom, when openssl is installed.
-  if (
-    length(bytes) != n_bytes && requireNamespace("openssl", quietly = TRUE)
-  ) {
+  # Windows, or any system without /dev/urandom. `openssl` is a hard
+  # dependency precisely so that this path always exists: there is no weak
+  # fallback, because a guessable token is worse than a clear failure.
+  if (length(bytes) != n_bytes) {
     bytes <- tryCatch(
       openssl::rand_bytes(n_bytes),
       error = function(e) NULL
     )
   }
 
-  if (length(bytes) == n_bytes) {
-    return(paste(as.character(bytes), collapse = ""))
+  if (length(bytes) != n_bytes) {
+    stop(
+      "Could not read ",
+      n_bytes,
+      " bytes from a cryptographic random source: neither '/dev/urandom' nor ",
+      "openssl::rand_bytes() is usable in this session. zeroserve refuses to ",
+      "serve data behind a guessable token.",
+      call. = FALSE
+    )
   }
 
-  # Last resort: NOT a CSPRNG. Mixes wall clock, process id and a temporary
-  # file name, so `set.seed()` does not reproduce it, but it is worth only a
-  # few tens of bits. Deliberately avoids runif() so that serving data never
-  # perturbs the caller's RNG stream.
-  warning(
-    "No cryptographic random source available (no /dev/urandom and the ",
-    "'openssl' package is not installed): zeroserve URLs are protected by a ",
-    "weak token. Install 'openssl' to get unguessable URLs.",
-    call. = FALSE
-  )
-  substr(
-    rlang::hash(list(Sys.time(), Sys.getpid(), tempfile())),
-    1L,
-    2L * n_bytes
-  )
+  # Deliberately avoids runif() so that serving data never perturbs the
+  # caller's RNG stream.
+  paste(as.character(bytes), collapse = "")
 }
 
 #' Build the browser-facing URL for a registered resource
@@ -79,7 +74,7 @@ NULL
 #' `zeroserve.base_url` option or by the RStudio proxy helper.
 #'
 #' @param port Integer port the background server listens on.
-#' @param token The per-session data-plane capability token.
+#' @param token The resource's data-plane capability token.
 #' @param path The registered resource path, e.g. `"/stream.arrow"`.
 #' @return A length-1 character vector with the full URL.
 #' @noRd
@@ -139,15 +134,15 @@ start_server <- function() {
     )
   }
 
-  # Two distinct secrets: the control-plane token never reaches a browser.
+  # The control-plane token never reaches a browser. Data-plane capability
+  # tokens are minted per resource in register_resource().
   ipc_token <- .zs_random_token() # Shared secret for control plane
-  data_token <- .zs_random_token() # Capability token carried in served URLs
   max_chunk <- getOption("zeroserve.max_chunk", 104857600L) # Default 100MB
 
   log_file <- tempfile("zeroserve_server_", fileext = ".log")
 
   server <- callr::r_bg(
-    func = function(port, ipc_token, data_token, log_file, max_chunk) {
+    func = function(port, ipc_token, log_file, max_chunk) {
       tryCatch(
         {
           write(
@@ -158,6 +153,67 @@ start_server <- function() {
           # Shared state for the registry
           registry <- new.env(parent = emptyenv())
 
+          # Every data-plane rejection is this exact response: status 404, no
+          # headers at all, body "Not Found". A token-less probe therefore
+          # cannot tell a zeroserve instance from a closed port, and cannot
+          # read the rejection cross-origin either.
+          not_found <- list(
+            status = 404L,
+            headers = list(),
+            body = "Not Found"
+          )
+
+          # Resolve a data-plane path to its resource, or NULL.
+          #
+          # Served URLs are "/<32 hex>/<registered path>", where the first
+          # segment is that resource's own capability token. A malformed
+          # segment, an unknown path and a token belonging to a different
+          # resource are all indistinguishable from each other: they return
+          # NULL, never an error and never a different status, so the endpoint
+          # is not an oracle for token or resource existence.
+          resolve_resource <- function(path) {
+            # Sliced on raw bytes because httpuv does not decode PATH_INFO, so
+            # an invalid UTF-8 path would make substr() throw and turn the
+            # uniform 404 into a 500. The hex segment is validated by byte
+            # code for the same reason: a regexp on an invalid multibyte
+            # string signals an error.
+            bytes <- charToRaw(path)
+
+            # "/" + 32 hex + "/" + at least one character.
+            if (length(bytes) < 35L) {
+              return(NULL)
+            }
+            codes <- as.integer(bytes)
+            if (codes[1L] != 47L || codes[34L] != 47L) {
+              return(NULL)
+            }
+            hex <- codes[2:33]
+            if (
+              !all((hex >= 48L & hex <= 57L) | (hex >= 97L & hex <= 102L))
+            ) {
+              return(NULL)
+            }
+
+            candidate <- rawToChar(bytes[2:33])
+            # Keeps the leading "/" of the registered path.
+            data_path <- rawToChar(bytes[-seq_len(33L)])
+
+            resource <- registry[[data_path]]
+            if (is.null(resource)) {
+              return(NULL)
+            }
+
+            stored <- resource$token
+            if (length(stored) != 1L) {
+              return(NULL)
+            }
+            if (!identical(as.character(stored)[[1L]], candidate)) {
+              return(NULL)
+            }
+
+            resource
+          }
+
           # Unified Handler
           app <- list(
             call = function(req) {
@@ -165,7 +221,16 @@ start_server <- function() {
               method <- req$REQUEST_METHOD
 
               # 1. CORS Preflight (OPTIONS)
+              #
+              # Gated on the capability token: answering 204 for any path made
+              # the instance fingerprintable cross-origin, which is exactly
+              # what the token exists to prevent. A real client always
+              # preflights the tokenised URL it was handed, and a browser
+              # never calls the control plane.
               if (method == "OPTIONS") {
+                if (is.null(resolve_resource(path))) {
+                  return(not_found)
+                }
                 return(list(
                   status = 204L,
                   headers = list(
@@ -173,6 +238,7 @@ start_server <- function() {
                     "Access-Control-Allow-Methods" = "GET, HEAD, OPTIONS",
                     "Access-Control-Allow-Headers" = "Range",
                     "Access-Control-Max-Age" = "86400",
+                    "Referrer-Policy" = "no-referrer",
                     "Content-Length" = "0",
                     "Connection" = "close"
                   ),
@@ -236,7 +302,12 @@ start_server <- function() {
                     body = "{\"status\": \"alive\"}"
                   )
                 } else if (ctrl_path == "/list") {
-                  reg_list <- as.list(registry)
+                  # Strip the capability tokens: /list output ends up in bug
+                  # reports, and the registry keys are what callers need.
+                  reg_list <- lapply(as.list(registry), function(r) {
+                    r$token <- NULL
+                    r
+                  })
                   list(
                     status = 200L,
                     headers = list("Content-Type" = "application/json"),
@@ -254,31 +325,7 @@ start_server <- function() {
                 }
               } else {
                 # 3. Data Plane
-                # Served URLs carry a per-session capability token as their
-                # first path segment. A missing, malformed or wrong token is
-                # answered with exactly the same 404 as an unknown path, so the
-                # endpoint is not an oracle for either. That 404 carries no
-                # CORS header, so a token-less cross-origin probe cannot even
-                # read the rejection.
-                not_found <- list(
-                  status = 404L,
-                  headers = list(),
-                  body = "Not Found"
-                )
-
-                token_prefix <- paste0("/", data_token, "/")
-                if (!startsWith(path, token_prefix)) {
-                  return(not_found)
-                }
-                # Keep the leading "/" of the registered path. Sliced on raw
-                # bytes because httpuv does not decode PATH_INFO, so an invalid
-                # UTF-8 path would make substr() throw and turn the uniform 404
-                # into a 500.
-                data_path <- rawToChar(
-                  charToRaw(path)[-seq_len(nchar(token_prefix, type = "bytes") - 1L)]
-                )
-
-                resource <- registry[[data_path]]
+                resource <- resolve_resource(path)
                 if (is.null(resource)) {
                   return(not_found)
                 }
@@ -288,11 +335,21 @@ start_server <- function() {
                     # Helper for data requests (to be hardened in next tier)
                     if (resource$type == "file") {
                       if (!file.exists(resource$path)) {
-                        return(list(
-                          status = 404L,
-                          headers = list("Access-Control-Allow-Origin" = "*"),
-                          body = "File Not Found"
-                        ))
+                        # Kept off the wire, on purpose: the response has to be
+                        # byte-identical to every other rejection. The log is
+                        # where this case is debuggable.
+                        # Never log `path`: it carries the capability token,
+                        # and logs get pasted into bug reports.
+                        write(
+                          sprintf(
+                            "[%s] Backing file gone: %s",
+                            Sys.time(),
+                            resource$path
+                          ),
+                          log_file,
+                          append = TRUE
+                        )
+                        return(not_found)
                       }
                       file_size <- file.info(resource$path)$size
                       range_header <- req$HTTP_RANGE
@@ -302,6 +359,7 @@ start_server <- function() {
                         "Access-Control-Allow-Headers" = "Range",
                         "Access-Control-Expose-Headers" = "Content-Length, Content-Range",
                         "Content-Encoding" = "identity",
+                        "Referrer-Policy" = "no-referrer",
                         "Accept-Ranges" = "bytes"
                       )
 
@@ -441,16 +499,13 @@ start_server <- function() {
                         headers = list(
                           "Content-Type" = "application/vnd.apache.arrow.stream",
                           "Content-Encoding" = "identity",
-                          "Access-Control-Allow-Origin" = "*"
+                          "Access-Control-Allow-Origin" = "*",
+                          "Referrer-Policy" = "no-referrer"
                         ),
                         body = mapped_buf
                       ))
                     }
-                    list(
-                      status = 404L,
-                      headers = list("Access-Control-Allow-Origin" = "*"),
-                      body = "Not Found"
-                    )
+                    not_found
                   },
                   error = function(e) {
                     write(
@@ -500,7 +555,6 @@ start_server <- function() {
     args = list(
       port = port,
       ipc_token = ipc_token,
-      data_token = data_token,
       log_file = log_file,
       max_chunk = max_chunk
     ),
@@ -510,7 +564,6 @@ start_server <- function() {
 
   .zeroserve_env$server <- server
   .zeroserve_env$ipc_token <- ipc_token
-  .zeroserve_env$data_token <- data_token
   .zeroserve_env$log_file <- log_file
   .zeroserve_env$port <- port
 
@@ -613,13 +666,21 @@ start_server <- function() {
 ) {
   method <- req$REQUEST_METHOD %||% "GET"
 
+  # Identical to the inline handler's uniform rejection.
+  not_found <- list(
+    status = 404L,
+    headers = list(),
+    body = "Not Found"
+  )
+
   if (resource$type == "file") {
     if (!file.exists(resource$path)) {
-      return(list(
-        status = 404L,
-        headers = list("Access-Control-Allow-Origin" = "*"),
-        body = "File Not Found"
-      ))
+      write(
+        sprintf("[%s] Backing file gone: %s", Sys.time(), resource$path),
+        log_file,
+        append = TRUE
+      )
+      return(not_found)
     }
 
     file_size <- file.info(resource$path)$size
@@ -631,6 +692,7 @@ start_server <- function() {
       "Access-Control-Allow-Headers" = "Range",
       "Access-Control-Expose-Headers" = "Content-Length, Content-Range",
       "Content-Encoding" = "identity",
+      "Referrer-Policy" = "no-referrer",
       "Accept-Ranges" = "bytes"
     )
 
@@ -758,17 +820,14 @@ start_server <- function() {
       headers = list(
         "Content-Type" = "application/vnd.apache.arrow.stream",
         "Content-Encoding" = "identity",
-        "Access-Control-Allow-Origin" = "*"
+        "Access-Control-Allow-Origin" = "*",
+        "Referrer-Policy" = "no-referrer"
       ),
       body = mapped_buf
     ))
   }
 
-  list(
-    status = 404L,
-    headers = list("Access-Control-Allow-Origin" = "*"),
-    body = "Not Found"
-  )
+  not_found
 }
 
 #' Check if the zeroserve background server is running
@@ -848,7 +907,6 @@ zs_stop_server <- function() {
   .zeroserve_env$server <- NULL
   .zeroserve_env$port <- NULL
   .zeroserve_env$ipc_token <- NULL
-  .zeroserve_env$data_token <- NULL
 
   return(TRUE)
 }
@@ -885,9 +943,15 @@ zs_clear_registry <- function() {
 
 #' Register a resource with the background server
 #'
+#' A fresh capability token is minted for every registration and stored on the
+#' resource record, so a leaked URL exposes that one resource rather than the
+#' whole session. Re-registering the same `path` overwrites the record with a
+#' new token, which is what revokes the URL returned earlier for it;
+#' [zs_clear_registry()] drops the records outright.
+#'
 #' @param path The URL path (e.g., "/layer_1.arrow").
 #' @param resource A list describing the resource (type, and path or shm_name).
-#' @return The full localhost URL.
+#' @return The full localhost URL, including the resource's token.
 #' @noRd
 register_resource <- function(path, resource) {
   if (startsWith(path, "/__zs__/")) {
@@ -896,7 +960,9 @@ register_resource <- function(path, resource) {
 
   start_server()
 
+  resource$token <- .zs_random_token()
+
   .send_ipc("/register", list(path = path, resource = resource))
 
-  .zs_public_url(.zeroserve_env$port, .zeroserve_env$data_token, path)
+  .zs_public_url(.zeroserve_env$port, resource$token, path)
 }

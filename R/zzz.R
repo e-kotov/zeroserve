@@ -4,7 +4,6 @@
 .zeroserve_env$log_file <- NULL
 .zeroserve_env$port <- NULL
 .zeroserve_env$ipc_token <- NULL
-.zeroserve_env$data_token <- NULL
 .zeroserve_env$mori_buffers <- list()
 .zeroserve_env$temp_files <- character(0)
 
