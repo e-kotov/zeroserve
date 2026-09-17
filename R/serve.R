@@ -263,12 +263,11 @@ zs_serve_parquet <- function(
       stop("Engine 'duckdb' requires the 'DBI' and 'duckdb' packages.")
     }
 
-    conn <- data
-    sql <- if (grepl(" ", query)) {
-      query
-    } else {
-      sprintf("SELECT * FROM %s", query)
-    }
+    # Accepts a DuckDB connection plus `query`, or any DuckDB-backed lazy
+    # table (including `duckspatial_df`), exactly like `zs_serve_arrow()`.
+    source <- .zs_duckdb_arrow_source(data, query = query)
+    conn <- source$conn
+    sql <- source$sql
 
     col_info <- DBI::dbGetQuery(
       conn,

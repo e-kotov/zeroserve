@@ -41,4 +41,4 @@ Suggests:
 VignetteBuilder: quarto
 Config/testthat/edition: 3
 Remotes:
-    Cidree/duckspatial@0c193c78323d7bdcf48461b2e673177d10ce7378
+    Cidree/duckspatial@b50941f1a4b2941c71bcc8801e04ed8dc700afa9
