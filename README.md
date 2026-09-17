@@ -51,8 +51,8 @@ url <- zs_serve_arrow(nc)
 # [1] "http://127.0.0.1:8080/stream.arrow"
 ```
 
-DuckSpatial queries use their native GeoArrow stream. The URL-based
-integration avoids a data attachment file:
+DuckSpatial queries can use their native GeoArrow stream. This prepares
+the data for fast browser rendering and avoids a data attachment file:
 
 ``` r
 countries <- duckspatial::ddbs_open_dataset(
@@ -75,21 +75,33 @@ an attachment file. For web maps, transform coordinates lazily in
 DuckSpatial to the longitude/latitude CRS expected by the renderer
 before serving.
 
-### Serving a Parquet File (Out-of-Core)
+### Serving DuckSpatial as GeoParquet (Out-of-Core)
 
-Serve a massive DuckDB table as a Parquet stream supporting HTTP Range
-requests.
+Use GeoParquet when minimizing preparation time in R matters more than
+browser decode time. DuckSpatial already stores geometry as WKB, the
+geometry encoding used by GeoParquet, so DuckDB can write the query
+result directly. This avoids converting WKB to native GeoArrow and
+avoids building a complete in-memory Arrow IPC buffer before the URL is
+returned.
 
 ``` r
-library(DBI)
-con <- dbConnect(duckdb::duckdb())
+countries <- duckspatial::ddbs_open_dataset(
+  system.file("spatial/countries.geojson", package = "duckspatial")
+)
 
-# ... perform massive DuckDB operations ...
+# Keep filtering and transformation lazy in DuckDB.
+selected <- countries |>
+  dplyr::filter(CONTINENT == "Europe")
 
-# Serve the result as a streamable Parquet file
-url <- zs_serve_parquet(con, "SELECT * FROM massive_table")
-# [1] "http://127.0.0.1:8080/stream.parquet"
+# DuckDB writes GeoParquet directly; zeroserve hosts the file with HTTP ranges.
+url <- zs_serve_parquet(selected, layer_id = "countries")
+# [1] "http://127.0.0.1:8080/countries.parquet"
 ```
+
+The browser must decode the WKB geometry before rendering. Use
+`zs_serve_arrow()` instead when time to first map render matters more
+than server-side preparation time. `zs_serve_parquet()` also accepts a
+DuckDB connection plus a table name or SQL query.
 
 ## How it works
 
