@@ -1,5 +1,100 @@
 #' @importFrom rlang %||%
+#' @importFrom stats runif
+#' @importFrom utils tail
 NULL
+
+#' Generate an unguessable token
+#'
+#' Returns 16 random bytes as 32 lowercase hexadecimal characters.
+#'
+#' @note The `rlang::hash(runif(1))` idiom previously used for the IPC token is
+#'   seeded by R's RNG and is therefore reproducible after `set.seed()`. Use
+#'   this helper for anything that must be unguessable by a third party.
+#' @return A length-1 character vector of 32 hexadecimal characters.
+#' @noRd
+.zs_random_token <- function(n_bytes = 16L) {
+  bytes <- NULL
+
+  # Portable and dependency-free on macOS, Linux and other unices.
+  if (file.exists("/dev/urandom")) {
+    bytes <- tryCatch(
+      {
+        con <- file("/dev/urandom", "rb")
+        on.exit(close(con), add = TRUE)
+        readBin(con, "raw", n = n_bytes)
+      },
+      error = function(e) NULL,
+      warning = function(w) NULL
+    )
+  }
+
+  # Windows, or a system without /dev/urandom, when openssl happens to be there.
+  if (
+    length(bytes) != n_bytes && requireNamespace("openssl", quietly = TRUE)
+  ) {
+    bytes <- tryCatch(
+      openssl::rand_bytes(n_bytes),
+      error = function(e) NULL
+    )
+  }
+
+  if (length(bytes) == n_bytes) {
+    return(paste(as.character(bytes), collapse = ""))
+  }
+
+  # Last resort: not a CSPRNG, but mixes wall clock, process id and a temporary
+  # file name, so it is not reproduced by resetting R's RNG.
+  substr(
+    rlang::hash(list(Sys.time(), Sys.getpid(), runif(1), tempfile())),
+    1L,
+    2L * n_bytes
+  )
+}
+
+#' Build the browser-facing URL for a registered resource
+#'
+#' `127.0.0.1` is only reachable by the browser when R runs on the same machine.
+#' On RStudio Server, Posit Workbench, Connect, containers or over SSH the
+#' address must be rewritten, either explicitly through the
+#' `zeroserve.base_url` option or by the RStudio proxy helper.
+#'
+#' @param port Integer port the background server listens on.
+#' @param token The per-session data-plane capability token.
+#' @param path The registered resource path, e.g. `"/stream.arrow"`.
+#' @return A length-1 character vector with the full URL.
+#' @noRd
+.zs_public_url <- function(port, token, path) {
+  base_url <- getOption("zeroserve.base_url")
+  if (
+    is.character(base_url) && length(base_url) == 1L && nzchar(base_url)
+  ) {
+    return(paste0(sub("/+$", "", base_url), "/", token, path))
+  }
+
+  local_url <- sprintf("http://127.0.0.1:%s/%s%s", port, token, path)
+
+  # Posit Workbench and RStudio Server proxy localhost ports as /p/<hash>/;
+  # the whole URL has to be translated, not just the authority.
+  if (
+    requireNamespace("rstudioapi", quietly = TRUE) &&
+      isTRUE(tryCatch(rstudioapi::isAvailable(), error = function(e) FALSE))
+  ) {
+    translated <- tryCatch(
+      rstudioapi::translateLocalUrl(local_url, absolute = TRUE),
+      error = function(e) NULL
+    )
+    if (
+      is.character(translated) &&
+        length(translated) == 1L &&
+        !is.na(translated) &&
+        grepl("^https?://", translated)
+    ) {
+      return(translated)
+    }
+  }
+
+  local_url
+}
 
 #' Start the background server for zeroserve
 #'
@@ -23,13 +118,15 @@ start_server <- function() {
     )
   }
 
-  ipc_token <- rlang::hash(runif(1)) # Shared secret for control plane
+  # Two distinct secrets: the control-plane token never reaches a browser.
+  ipc_token <- .zs_random_token() # Shared secret for control plane
+  data_token <- .zs_random_token() # Capability token carried in served URLs
   max_chunk <- getOption("zeroserve.max_chunk", 104857600L) # Default 100MB
 
   log_file <- tempfile("zeroserve_server_", fileext = ".log")
 
   server <- callr::r_bg(
-    func = function(port, ipc_token, log_file, max_chunk) {
+    func = function(port, ipc_token, data_token, log_file, max_chunk) {
       tryCatch(
         {
           write(
@@ -136,13 +233,31 @@ start_server <- function() {
                 }
               } else {
                 # 3. Data Plane
-                resource <- registry[[path]]
+                # Served URLs carry a per-session capability token as their
+                # first path segment. A missing, malformed or wrong token is
+                # answered with exactly the same 404 as an unknown path, so the
+                # endpoint is not an oracle for either. The wildcard CORS
+                # header stays: the secret in the path is the control now.
+                not_found <- list(
+                  status = 404L,
+                  headers = list("Access-Control-Allow-Origin" = "*"),
+                  body = "Not Found"
+                )
+
+                token_prefix <- paste0("/", data_token, "/")
+                if (!startsWith(path, token_prefix)) {
+                  return(not_found)
+                }
+                # Keep the leading "/" of the registered path.
+                data_path <- substr(
+                  path,
+                  nchar(token_prefix),
+                  nchar(path)
+                )
+
+                resource <- registry[[data_path]]
                 if (is.null(resource)) {
-                  return(list(
-                    status = 404L,
-                    headers = list("Access-Control-Allow-Origin" = "*"),
-                    body = "Not Found"
-                  ))
+                  return(not_found)
                 }
 
                 tryCatch(
@@ -362,6 +477,7 @@ start_server <- function() {
     args = list(
       port = port,
       ipc_token = ipc_token,
+      data_token = data_token,
       log_file = log_file,
       max_chunk = max_chunk
     ),
@@ -371,6 +487,7 @@ start_server <- function() {
 
   .zeroserve_env$server <- server
   .zeroserve_env$ipc_token <- ipc_token
+  .zeroserve_env$data_token <- data_token
   .zeroserve_env$log_file <- log_file
   .zeroserve_env$port <- port
 
@@ -708,6 +825,7 @@ zs_stop_server <- function() {
   .zeroserve_env$server <- NULL
   .zeroserve_env$port <- NULL
   .zeroserve_env$ipc_token <- NULL
+  .zeroserve_env$data_token <- NULL
 
   return(TRUE)
 }
@@ -757,5 +875,5 @@ register_resource <- function(path, resource) {
 
   .send_ipc("/register", list(path = path, resource = resource))
 
-  sprintf("http://127.0.0.1:%s%s", .zeroserve_env$port, path)
+  .zs_public_url(.zeroserve_env$port, .zeroserve_env$data_token, path)
 }

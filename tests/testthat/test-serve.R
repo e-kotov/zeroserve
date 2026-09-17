@@ -1,3 +1,12 @@
+# Served URLs carry an unguessable per-session capability token as the first
+# path segment: http://127.0.0.1:<port>/<32 hex chars>/<layer>.<ext>
+expect_zs_url <- function(url, path_regex) {
+  expect_match(
+    url,
+    paste0("^http://127\\.0\\.0\\.1:[0-9]+/[0-9a-f]{32}/", path_regex, "$")
+  )
+}
+
 expect_arrow_download <- function(url) {
   temp_out <- tempfile(fileext = ".arrow")
   curl::curl_download(url, temp_out, quiet = TRUE)
@@ -13,7 +22,7 @@ test_that("zs_serve_file handles generic files", {
   writeLines("hello world", temp_f)
 
   url <- zs_serve_file(temp_f, layer_id = "test_file")
-  expect_match(url, "^http://127.0.0.1:[0-9]+/test_file\\.txt$")
+  expect_zs_url(url, "test_file\\.txt")
 
   temp_out <- tempfile()
   # Using curl directly to avoid weird R download.file localhost SSL issues
@@ -28,7 +37,7 @@ test_that("zs_serve_parquet handles arrow engine (non-spatial)", {
   df <- data.frame(a = 1:5, b = letters[1:5])
   url <- zs_serve_parquet(df, engine = "arrow", layer_id = "arrow_non_spatial")
 
-  expect_match(url, "^http://127.0.0.1:[0-9]+/arrow_non_spatial\\.parquet$")
+  expect_zs_url(url, "arrow_non_spatial\\.parquet")
 
   temp_out <- tempfile(fileext = ".parquet")
   curl::curl_download(url, temp_out, quiet = TRUE)
@@ -48,7 +57,7 @@ test_that("zs_serve_parquet handles arrow engine (spatial)", {
   nc <- nc[1:5, ]
 
   url <- zs_serve_parquet(nc, engine = "arrow", layer_id = "arrow_spatial")
-  expect_match(url, "^http://127.0.0.1:[0-9]+/arrow_spatial\\.parquet$")
+  expect_zs_url(url, "arrow_spatial\\.parquet")
 
   temp_out <- tempfile(fileext = ".parquet")
   curl::curl_download(url, temp_out, quiet = TRUE)
@@ -67,7 +76,7 @@ test_that("zs_serve_arrow handles standard data.frame (non-spatial)", {
   df <- data.frame(a = 1:5, b = letters[1:5])
   url <- zs_serve_arrow(df, layer_id = "test_df")
 
-  expect_match(url, "^http://127.0.0.1:[0-9]+/test_df\\.arrow$")
+  expect_zs_url(url, "test_df\\.arrow")
 
   temp_out <- tempfile(fileext = ".arrow")
   curl::curl_download(url, temp_out, quiet = TRUE)
@@ -105,7 +114,7 @@ test_that("zs_serve_arrow handles DuckDB connection with table name", {
     query = "test_table",
     layer_id = "test_duckdb_table"
   )
-  expect_match(url, "^http://127.0.0.1:[0-9]+/test_duckdb_table\\.arrow$")
+  expect_zs_url(url, "test_duckdb_table\\.arrow")
 
   stream <- expect_arrow_download(url)
   res <- as.data.frame(stream)
@@ -132,7 +141,7 @@ test_that("zs_serve_arrow handles DuckDB connection with SQL query", {
     query = "SELECT a, b FROM test_table WHERE a >= 3 ORDER BY a",
     layer_id = "test_duckdb_sql"
   )
-  expect_match(url, "^http://127.0.0.1:[0-9]+/test_duckdb_sql\\.arrow$")
+  expect_zs_url(url, "test_duckdb_sql\\.arrow")
 
   stream <- expect_arrow_download(url)
   res <- as.data.frame(stream)
@@ -158,7 +167,7 @@ test_that("zs_serve_arrow handles DuckDB-backed dbplyr tables", {
   tbl <- dplyr::tbl(con, "test_table")
 
   url <- zs_serve_arrow(tbl, layer_id = "test_duckdb_tbl")
-  expect_match(url, "^http://127.0.0.1:[0-9]+/test_duckdb_tbl\\.arrow$")
+  expect_zs_url(url, "test_duckdb_tbl\\.arrow")
 
   stream <- expect_arrow_download(url)
   res <- as.data.frame(stream)
@@ -200,10 +209,7 @@ test_that("zs_serve_arrow requests native DuckSpatial streams", {
     layer_id = "test_duckspatial_dispatch",
     chunk_size = 2
   )
-  expect_match(
-    url,
-    "^http://127.0.0.1:[0-9]+/test_duckspatial_dispatch\\.arrow$"
-  )
+  expect_zs_url(url, "test_duckspatial_dispatch\\.arrow")
   expect_identical(calls$native, TRUE)
   expect_identical(calls$chunk_size, 2)
 
@@ -303,7 +309,7 @@ test_that("zs_serve_arrow handles empty sf object", {
   nc_empty <- nc[0, ]
 
   url <- zs_serve_arrow(nc_empty, layer_id = "test_empty")
-  expect_match(url, "^http://127.0.0.1:[0-9]+/test_empty\\.arrow$")
+  expect_zs_url(url, "test_empty\\.arrow")
 
   temp_out <- tempfile(fileext = ".arrow")
   curl::curl_download(url, temp_out, quiet = TRUE)
@@ -336,7 +342,7 @@ test_that("zs_serve_parquet handles non-spatial DuckDB table", {
     engine = "duckdb",
     layer_id = "test_parquet_df"
   )
-  expect_match(url, "^http://127.0.0.1:[0-9]+/test_parquet_df\\.parquet$")
+  expect_zs_url(url, "test_parquet_df\\.parquet")
 
   temp_out <- tempfile(fileext = ".parquet")
   curl::curl_download(url, temp_out, quiet = TRUE)
@@ -441,7 +447,7 @@ test_that("zs_serve_arrow returns a valid streaming URL (spatial)", {
   url <- zs_serve_arrow(nc, layer_id = "test_arrow")
 
   expect_true(is.character(url))
-  expect_match(url, "^http://127.0.0.1:[0-9]+/test_arrow\\.arrow$")
+  expect_zs_url(url, "test_arrow\\.arrow")
 
   temp_out <- tempfile(fileext = ".arrow")
   res <- tryCatch(
@@ -555,7 +561,7 @@ test_that("zs_serve_parquet returns a valid streaming URL (spatial)", {
   )
 
   expect_true(is.character(url))
-  expect_match(url, "^http://127.0.0.1:[0-9]+/test_parquet\\.parquet$")
+  expect_zs_url(url, "test_parquet\\.parquet")
 
   temp_out <- tempfile(fileext = ".parquet")
   curl::curl_download(url, temp_out, quiet = TRUE)
@@ -689,3 +695,69 @@ test_that("open-ended range requests work", {
 # processes are alive when covr attempts to finalize the trace.
 zs_stop_server()
 zs_clear_registry()
+
+test_that("data plane requires the capability token", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+
+  temp_f <- tempfile(fileext = ".txt")
+  writeBin(charToRaw("hello token"), temp_f)
+
+  url <- zs_serve_file(temp_f, layer_id = "test_token_auth")
+  expect_zs_url(url, "test_token_auth\\.txt")
+
+  token <- .zeroserve_env$data_token
+  expect_match(token, "^[0-9a-f]{32}$")
+
+  # The tokenised URL still serves the payload byte for byte.
+  temp_out <- tempfile()
+  curl::curl_download(url, temp_out, quiet = TRUE)
+  expect_equal(
+    readBin(temp_out, "raw", n = file.size(temp_f)),
+    readBin(temp_f, "raw", n = file.size(temp_f))
+  )
+
+  # A single flipped hex character is rejected.
+  flipped <- if (substr(token, 1L, 1L) == "0") "1" else "0"
+  bad_url <- sub(token, paste0(flipped, substring(token, 2L)), url, fixed = TRUE)
+  res_bad <- curl::curl_fetch_memory(bad_url)
+  expect_equal(res_bad$status_code, 404L)
+
+  # The bare registry path without the token segment is rejected.
+  bare_url <- sprintf(
+    "http://127.0.0.1:%s/test_token_auth.txt",
+    .zeroserve_env$port
+  )
+  res_bare <- curl::curl_fetch_memory(bare_url)
+  expect_equal(res_bare$status_code, 404L)
+
+  # Both failures are indistinguishable from an unknown path, so the endpoint
+  # is not an oracle for token or resource existence.
+  res_unknown <- curl::curl_fetch_memory(sprintf(
+    "http://127.0.0.1:%s/%s/no_such_layer.txt",
+    .zeroserve_env$port,
+    token
+  ))
+  expect_equal(res_unknown$status_code, 404L)
+  expect_equal(rawToChar(res_bad$content), rawToChar(res_unknown$content))
+  expect_equal(rawToChar(res_bare$content), rawToChar(res_unknown$content))
+})
+
+test_that("Range requests work through the tokenised URL", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+
+  temp_f <- tempfile(fileext = ".bin")
+  writeBin(charToRaw("0123456789"), temp_f)
+
+  url <- zs_serve_file(temp_f, layer_id = "test_token_range")
+
+  h <- curl::new_handle()
+  curl::handle_setheaders(h, Range = "bytes=2-5")
+  res <- curl::curl_fetch_memory(url, handle = h)
+
+  expect_equal(res$status_code, 206L)
+  expect_equal(rawToChar(res$content), "2345")
+  headers <- curl::parse_headers_list(res$headers)
+  expect_equal(headers[["content-range"]], "bytes 2-5/10")
+})

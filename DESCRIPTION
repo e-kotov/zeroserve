@@ -29,7 +29,7 @@ Suggests:
     arrow,
     sf,
     duckdb,
-    duckspatial (> 1.2.1),
+    duckspatial (>= 1.2.1),
     geoarrow,
     dbplyr,
     dplyr,
@@ -37,6 +37,8 @@ Suggests:
     knitr,
     rmarkdown,
     quarto,
+    openssl,
+    rstudioapi,
     testthat (>= 3.0.0)
 VignetteBuilder: quarto
 Config/testthat/edition: 3

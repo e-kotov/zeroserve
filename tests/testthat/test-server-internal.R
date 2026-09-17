@@ -125,3 +125,52 @@ test_that(".handle_data_request handles mori resources", {
   )
   expect_equal(rawToChar(res$body), "hello mori")
 })
+
+test_that(".zs_random_token returns unpredictable hex tokens", {
+  token <- zeroserve:::.zs_random_token()
+  expect_match(token, "^[0-9a-f]{32}$")
+  expect_false(identical(token, zeroserve:::.zs_random_token()))
+
+  # Unlike the seeded `rlang::hash(runif(1))` idiom, resetting R's RNG must not
+  # reproduce a token.
+  set.seed(1)
+  a <- zeroserve:::.zs_random_token()
+  set.seed(1)
+  b <- zeroserve:::.zs_random_token()
+  expect_false(identical(a, b))
+})
+
+test_that(".zs_public_url honours zeroserve.base_url", {
+  token <- strrep("a", 32L)
+  old <- options(zeroserve.base_url = "https://workbench.example.com/p/9c1f")
+  on.exit(options(old), add = TRUE)
+
+  expect_equal(
+    zeroserve:::.zs_public_url(8080L, token, "/layer.arrow"),
+    paste0("https://workbench.example.com/p/9c1f/", token, "/layer.arrow")
+  )
+
+  # A trailing slash must not produce a doubled separator.
+  options(zeroserve.base_url = "https://workbench.example.com/p/9c1f/")
+  expect_equal(
+    zeroserve:::.zs_public_url(8080L, token, "/layer.arrow"),
+    paste0("https://workbench.example.com/p/9c1f/", token, "/layer.arrow")
+  )
+})
+
+test_that(".zs_public_url falls back to the loopback address", {
+  skip_if(
+    requireNamespace("rstudioapi", quietly = TRUE) &&
+      isTRUE(tryCatch(rstudioapi::isAvailable(), error = function(e) FALSE)),
+    "RStudio URL translation is active in this session"
+  )
+
+  old <- options(zeroserve.base_url = NULL)
+  on.exit(options(old), add = TRUE)
+  token <- strrep("b", 32L)
+
+  expect_equal(
+    zeroserve:::.zs_public_url(8080L, token, "/layer.arrow"),
+    paste0("http://127.0.0.1:8080/", token, "/layer.arrow")
+  )
+})
