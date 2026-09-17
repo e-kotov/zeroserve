@@ -6,6 +6,9 @@
 #'   DuckDB connection.
 #' @param layer_id A unique identifier for this data stream.
 #' @param crs Optional Coordinate Reference System.
+#' @param chunk_size Maximum rows per Arrow record batch for a
+#'   `duckspatial_df`. Smaller batches let streaming browser consumers render
+#'   data progressively. Defaults to 1,000,000 rows.
 #'
 #' @return A URL string pointing to the localhost background server.
 #' @export
@@ -18,11 +21,17 @@
 #' print(url)
 #' zs_stop_server()
 #' }
-zs_serve_arrow <- function(x, query = NULL, layer_id = "stream", crs = NULL) {
+zs_serve_arrow <- function(
+  x,
+  query = NULL,
+  layer_id = "stream",
+  crs = NULL,
+  chunk_size = 1e6
+) {
   buf <- if (.zs_is_duckdb_arrow_input(x)) {
     .zs_duckdb_arrow_ipc_buffer(x, query = query)
   } else {
-    na_stream <- as_arrow_stream(x, crs = crs)
+    na_stream <- as_arrow_stream(x, crs = crs, chunk_size = chunk_size)
     on.exit(na_stream$release(), add = TRUE)
     .zs_arrow_stream_to_raw(na_stream)
   }

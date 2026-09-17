@@ -5,13 +5,19 @@
 #'
 #' @param x A `duckspatial_df`, `sf`, `arrow::Table`, or `nanoarrow_array_stream`.
 #' @param crs Optional CRS to override or assign if missing.
+#' @param chunk_size Maximum rows per Arrow record batch for a
+#'   `duckspatial_df`.
 #'
 #' @return A `nanoarrow_array_stream`.
 #' @noRd
-as_arrow_stream <- function(x, crs = NULL) {
+as_arrow_stream <- function(x, crs = NULL, chunk_size = 1e6) {
   # 1. Delegate native geometry conversion to DuckSpatial.
   if (inherits(x, "duckspatial_df")) {
-    return(nanoarrow::as_nanoarrow_array_stream(x, native = TRUE))
+    return(nanoarrow::as_nanoarrow_array_stream(
+      x,
+      native = TRUE,
+      chunk_size = chunk_size
+    ))
   }
 
   # 2. If it's a data.frame/sf, handle geometries and reproject

@@ -173,12 +173,15 @@ test_that("zs_serve_arrow requests native DuckSpatial streams", {
 
   calls <- new.env(parent = emptyenv())
   calls$native <- NULL
+  calls$chunk_size <- NULL
   as_nanoarrow_array_stream.fake_duckspatial_df <- function(
     x,
     ...,
-    native = FALSE
+    native = FALSE,
+    chunk_size = 1e6
   ) {
     calls$native <- native
+    calls$chunk_size <- chunk_size
     nanoarrow::as_nanoarrow_array_stream(data.frame(a = x$a, b = x$b))
   }
   registerS3method(
@@ -192,12 +195,17 @@ test_that("zs_serve_arrow requests native DuckSpatial streams", {
     data.frame(a = 1:5, b = letters[1:5]),
     class = c("fake_duckspatial_df", "duckspatial_df", "data.frame")
   )
-  url <- zs_serve_arrow(x, layer_id = "test_duckspatial_dispatch")
+  url <- zs_serve_arrow(
+    x,
+    layer_id = "test_duckspatial_dispatch",
+    chunk_size = 2
+  )
   expect_match(
     url,
     "^http://127.0.0.1:[0-9]+/test_duckspatial_dispatch\\.arrow$"
   )
   expect_identical(calls$native, TRUE)
+  expect_identical(calls$chunk_size, 2)
 
   stream <- expect_arrow_download(url)
   res <- as.data.frame(stream)

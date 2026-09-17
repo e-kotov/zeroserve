@@ -4,7 +4,13 @@
 \alias{zs_serve_arrow}
 \title{Serve an object via In-Memory Arrow IPC (mori)}
 \usage{
-zs_serve_arrow(x, query = NULL, layer_id = "stream", crs = NULL)
+zs_serve_arrow(
+  x,
+  query = NULL,
+  layer_id = "stream",
+  crs = NULL,
+  chunk_size = 1e+06
+)
 }
 \arguments{
 \item{x}{A spatial object (e.g. \code{sf}, \code{duckspatial_df}), data frame,
@@ -16,6 +22,10 @@ DuckDB connection.}
 \item{layer_id}{A unique identifier for this data stream.}
 
 \item{crs}{Optional Coordinate Reference System.}
+
+\item{chunk_size}{Maximum rows per Arrow record batch for a
+\code{duckspatial_df}. Smaller batches let streaming browser consumers render
+data progressively. Defaults to 1,000,000 rows.}
 }
 \value{
 A URL string pointing to the localhost background server.
