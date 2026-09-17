@@ -1,7 +1,30 @@
 #' @importFrom rlang %||%
-#' @importFrom stats runif
 #' @importFrom utils tail
 NULL
+
+#' Read bytes from the system CSPRNG
+#'
+#' @param n_bytes Number of bytes to read.
+#' @return A raw vector of `n_bytes`, or `NULL` when unavailable.
+#' @noRd
+.zs_urandom_bytes <- function(n_bytes) {
+  if (!file.exists("/dev/urandom")) {
+    return(NULL)
+  }
+
+  tryCatch(
+    {
+      # `raw = TRUE` is required: /dev/urandom is a character device, and
+      # without it file() signals "'raw = FALSE' but ... is not a regular
+      # file", which would divert every token to the weak fallback below.
+      con <- file("/dev/urandom", "rb", raw = TRUE)
+      on.exit(close(con), add = TRUE)
+      bytes <- readBin(con, "raw", n = n_bytes)
+      if (length(bytes) == n_bytes) bytes else NULL
+    },
+    error = function(e) NULL
+  )
+}
 
 #' Generate an unguessable token
 #'
@@ -10,25 +33,14 @@ NULL
 #' @note The `rlang::hash(runif(1))` idiom previously used for the IPC token is
 #'   seeded by R's RNG and is therefore reproducible after `set.seed()`. Use
 #'   this helper for anything that must be unguessable by a third party.
-#' @return A length-1 character vector of 32 hexadecimal characters.
+#' @param n_bytes Number of random bytes behind the token.
+#' @return A length-1 character vector of `2 * n_bytes` hexadecimal characters.
 #' @noRd
 .zs_random_token <- function(n_bytes = 16L) {
-  bytes <- NULL
-
   # Portable and dependency-free on macOS, Linux and other unices.
-  if (file.exists("/dev/urandom")) {
-    bytes <- tryCatch(
-      {
-        con <- file("/dev/urandom", "rb")
-        on.exit(close(con), add = TRUE)
-        readBin(con, "raw", n = n_bytes)
-      },
-      error = function(e) NULL,
-      warning = function(w) NULL
-    )
-  }
+  bytes <- .zs_urandom_bytes(n_bytes)
 
-  # Windows, or a system without /dev/urandom, when openssl happens to be there.
+  # Windows, or a system without /dev/urandom, when openssl is installed.
   if (
     length(bytes) != n_bytes && requireNamespace("openssl", quietly = TRUE)
   ) {
@@ -42,10 +54,18 @@ NULL
     return(paste(as.character(bytes), collapse = ""))
   }
 
-  # Last resort: not a CSPRNG, but mixes wall clock, process id and a temporary
-  # file name, so it is not reproduced by resetting R's RNG.
+  # Last resort: NOT a CSPRNG. Mixes wall clock, process id and a temporary
+  # file name, so `set.seed()` does not reproduce it, but it is worth only a
+  # few tens of bits. Deliberately avoids runif() so that serving data never
+  # perturbs the caller's RNG stream.
+  warning(
+    "No cryptographic random source available (no /dev/urandom and the ",
+    "'openssl' package is not installed): zeroserve URLs are protected by a ",
+    "weak token. Install 'openssl' to get unguessable URLs.",
+    call. = FALSE
+  )
   substr(
-    rlang::hash(list(Sys.time(), Sys.getpid(), runif(1), tempfile())),
+    rlang::hash(list(Sys.time(), Sys.getpid(), tempfile())),
     1L,
     2L * n_bytes
   )
@@ -65,10 +85,11 @@ NULL
 #' @noRd
 .zs_public_url <- function(port, token, path) {
   base_url <- getOption("zeroserve.base_url")
-  if (
-    is.character(base_url) && length(base_url) == 1L && nzchar(base_url)
-  ) {
-    return(paste0(sub("/+$", "", base_url), "/", token, path))
+  if (is.character(base_url) && length(base_url) == 1L && !is.na(base_url)) {
+    base_url <- trimws(base_url)
+    if (nzchar(base_url)) {
+      return(paste0(sub("/+$", "", base_url), "/", token, path))
+    }
   }
 
   local_url <- sprintf("http://127.0.0.1:%s/%s%s", port, token, path)
@@ -236,11 +257,12 @@ start_server <- function() {
                 # Served URLs carry a per-session capability token as their
                 # first path segment. A missing, malformed or wrong token is
                 # answered with exactly the same 404 as an unknown path, so the
-                # endpoint is not an oracle for either. The wildcard CORS
-                # header stays: the secret in the path is the control now.
+                # endpoint is not an oracle for either. That 404 carries no
+                # CORS header, so a token-less cross-origin probe cannot even
+                # read the rejection.
                 not_found <- list(
                   status = 404L,
-                  headers = list("Access-Control-Allow-Origin" = "*"),
+                  headers = list(),
                   body = "Not Found"
                 )
 
@@ -248,11 +270,12 @@ start_server <- function() {
                 if (!startsWith(path, token_prefix)) {
                   return(not_found)
                 }
-                # Keep the leading "/" of the registered path.
-                data_path <- substr(
-                  path,
-                  nchar(token_prefix),
-                  nchar(path)
+                # Keep the leading "/" of the registered path. Sliced on raw
+                # bytes because httpuv does not decode PATH_INFO, so an invalid
+                # UTF-8 path would make substr() throw and turn the uniform 404
+                # into a 500.
+                data_path <- rawToChar(
+                  charToRaw(path)[-seq_len(nchar(token_prefix, type = "bytes") - 1L)]
                 )
 
                 resource <- registry[[data_path]]

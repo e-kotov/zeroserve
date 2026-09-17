@@ -19,7 +19,10 @@
 #'     capability token, is appended to this value, and a trailing `/` is
 #'     ignored. When unset, zeroserve returns `http://127.0.0.1:<port>/...`,
 #'     translating it through \pkg{rstudioapi} when running inside RStudio
-#'     Server or Posit Workbench.}
+#'     Server or Posit Workbench. Give a scheme, host and optional path prefix
+#'     only: a query string or fragment is appended verbatim and will not work.
+#'     Serve over `https` when the page embedding the data is itself `https`,
+#'     or the browser will block the request as mixed content.}
 #' }
 #'
 #' @section Data-plane token:

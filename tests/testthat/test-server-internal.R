@@ -126,6 +126,25 @@ test_that(".handle_data_request handles mori resources", {
   expect_equal(rawToChar(res$body), "hello mori")
 })
 
+test_that(".zs_urandom_bytes reads the system CSPRNG", {
+  skip_if_not(file.exists("/dev/urandom"), "no /dev/urandom on this platform")
+
+  # Regression guard: file("/dev/urandom", "rb") without `raw = TRUE` signals a
+  # "not a regular file" warning, which silently downgraded every token to the
+  # weak fallback.
+  bytes <- zeroserve:::.zs_urandom_bytes(16L)
+  expect_true(is.raw(bytes))
+  expect_length(bytes, 16L)
+})
+
+test_that(".zs_random_token leaves the caller's RNG stream untouched", {
+  set.seed(42)
+  runif(1)
+  before <- .Random.seed
+  zeroserve:::.zs_random_token()
+  expect_identical(.Random.seed, before)
+})
+
 test_that(".zs_random_token returns unpredictable hex tokens", {
   token <- zeroserve:::.zs_random_token()
   expect_match(token, "^[0-9a-f]{32}$")
@@ -155,6 +174,25 @@ test_that(".zs_public_url honours zeroserve.base_url", {
   expect_equal(
     zeroserve:::.zs_public_url(8080L, token, "/layer.arrow"),
     paste0("https://workbench.example.com/p/9c1f/", token, "/layer.arrow")
+  )
+})
+
+test_that(".zs_public_url ignores an unusable zeroserve.base_url", {
+  token <- strrep("c", 32L)
+  old <- options(zeroserve.base_url = NA_character_)
+  on.exit(options(old), add = TRUE)
+
+  # NA passes nzchar(), so it has to be rejected explicitly.
+  expect_equal(
+    zeroserve:::.zs_public_url(8080L, token, "/layer.arrow"),
+    paste0("http://127.0.0.1:8080/", token, "/layer.arrow")
+  )
+
+  # Surrounding whitespace must not leak into the URL.
+  options(zeroserve.base_url = "  https://ex.org/zs  ")
+  expect_equal(
+    zeroserve:::.zs_public_url(8080L, token, "/layer.arrow"),
+    paste0("https://ex.org/zs/", token, "/layer.arrow")
   )
 })
 

@@ -741,6 +741,24 @@ test_that("data plane requires the capability token", {
   expect_equal(res_unknown$status_code, 404L)
   expect_equal(rawToChar(res_bad$content), rawToChar(res_unknown$content))
   expect_equal(rawToChar(res_bare$content), rawToChar(res_unknown$content))
+
+  # Boundary cases around the prefix strip: the token alone, with and without
+  # a trailing slash.
+  for (suffix in c(paste0("/", token), paste0("/", token, "/"))) {
+    res_edge <- curl::curl_fetch_memory(sprintf(
+      "http://127.0.0.1:%s%s",
+      .zeroserve_env$port,
+      suffix
+    ))
+    expect_equal(res_edge$status_code, 404L)
+  }
+
+  # The token-less rejection must not be readable cross-origin either.
+  expect_false(any(grepl(
+    "Access-Control-Allow-Origin",
+    curl::parse_headers(res_bare$headers),
+    ignore.case = TRUE
+  )))
 })
 
 test_that("Range requests work through the tokenised URL", {
