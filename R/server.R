@@ -163,6 +163,7 @@ start_server <- function() {
                         "Access-Control-Allow-Methods" = "GET, HEAD, OPTIONS",
                         "Access-Control-Allow-Headers" = "Range",
                         "Access-Control-Expose-Headers" = "Content-Length, Content-Range",
+                        "Content-Encoding" = "identity",
                         "Accept-Ranges" = "bytes"
                       )
 
@@ -172,7 +173,7 @@ start_server <- function() {
                           headers = c(
                             list(
                               "Content-Type" = "application/octet-stream",
-                              "Content-Length" = as.character(file_size)
+                              "Content-Length" = format(file_size, scientific = FALSE)
                             ),
                             common_headers
                           ),
@@ -264,7 +265,7 @@ start_server <- function() {
                                   end,
                                   file_size
                                 ),
-                                "Content-Length" = as.character(chunk_size),
+                                "Content-Length" = format(chunk_size, scientific = FALSE),
                                 "Connection" = "close"
                               ),
                               common_headers
@@ -288,7 +289,7 @@ start_server <- function() {
                                 end,
                                 file_size
                               ),
-                              "Content-Length" = as.character(chunk_size)
+                              "Content-Length" = format(chunk_size, scientific = FALSE)
                             ),
                             common_headers
                           ),
@@ -301,6 +302,7 @@ start_server <- function() {
                         status = 200L,
                         headers = list(
                           "Content-Type" = "application/vnd.apache.arrow.stream",
+                          "Content-Encoding" = "identity",
                           "Access-Control-Allow-Origin" = "*"
                         ),
                         body = mapped_buf
@@ -488,6 +490,7 @@ start_server <- function() {
       "Access-Control-Allow-Methods" = "GET, HEAD, OPTIONS",
       "Access-Control-Allow-Headers" = "Range",
       "Access-Control-Expose-Headers" = "Content-Length, Content-Range",
+      "Content-Encoding" = "identity",
       "Accept-Ranges" = "bytes"
     )
 
@@ -497,7 +500,7 @@ start_server <- function() {
         headers = c(
           list(
             "Content-Type" = "application/octet-stream",
-            "Content-Length" = as.character(file_size)
+            "Content-Length" = format(file_size, scientific = FALSE)
           ),
           common_headers
         ),
@@ -580,7 +583,7 @@ start_server <- function() {
                 end,
                 file_size
               ),
-              "Content-Length" = as.character(chunk_size),
+              "Content-Length" = format(chunk_size, scientific = FALSE),
               "Connection" = "close"
             ),
             common_headers
@@ -600,7 +603,7 @@ start_server <- function() {
           list(
             "Content-Type" = "application/octet-stream",
             "Content-Range" = sprintf("bytes %s-%s/%s", start, end, file_size),
-            "Content-Length" = as.character(chunk_size)
+            "Content-Length" = format(chunk_size, scientific = FALSE)
           ),
           common_headers
         ),
@@ -614,6 +617,7 @@ start_server <- function() {
       status = 200L,
       headers = list(
         "Content-Type" = "application/vnd.apache.arrow.stream",
+        "Content-Encoding" = "identity",
         "Access-Control-Allow-Origin" = "*"
       ),
       body = mapped_buf
