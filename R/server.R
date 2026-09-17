@@ -256,13 +256,24 @@ start_server <- function() {
 
               # 2. Control Plane (/__zs__/)
               if (startsWith(path, "/__zs__/")) {
+                # An unauthenticated probe gets the same uniform 404 as any
+                # unknown path, not a 403: a distinct status at a fixed,
+                # guessable path identified a zeroserve instance on the first
+                # request and undid what gating the preflight bought. With a
+                # valid token an unknown control endpoint already answers this
+                # exact 404, so the two cases are indistinguishable.
+                #
+                # identical() rather than !=, and guarded on type and length,
+                # so a hostile header value can only miss. A comparison that
+                # signalled would escape the data branch's tryCatch and turn
+                # into a 500, which would be an oracle all over again.
                 token <- req$HTTP_X_ZEROSERVE_TOKEN
-                if (is.null(token) || token != ipc_token) {
-                  return(list(
-                    status = 403L,
-                    headers = list(),
-                    body = "Forbidden"
-                  ))
+                if (
+                  !is.character(token) ||
+                    length(token) != 1L ||
+                    !identical(token, ipc_token)
+                ) {
+                  return(not_found)
                 }
 
                 ctrl_path <- sub("^/__zs__", "", path)

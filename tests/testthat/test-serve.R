@@ -1053,3 +1053,56 @@ test_that("a missing backing file is logged once, not once per request", {
   )
   expect_equal(sum(hits), 1L)
 })
+
+test_that("an unauthenticated control-plane probe is indistinguishable", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+
+  temp_f <- tempfile(fileext = ".txt")
+  writeBin(charToRaw("anchor"), temp_f)
+  url <- zs_serve_file(temp_f, layer_id = "test_ctrl_probe")
+  port <- .zeroserve_env$port
+
+  # Baseline: an unknown data path.
+  res_unknown <- curl::curl_fetch_memory(sprintf(
+    "http://127.0.0.1:%s/%s/no_such_layer.txt",
+    port,
+    zs_token(url)
+  ))
+  expect_uniform_404(res_unknown)
+
+  # A control-plane path is a fixed, guessable address. Probing it without the
+  # IPC token, with a wrong one, or with a hostile header value must not
+  # single it out: a distinct status here identified the instance on the first
+  # request, whatever the preflight gate does.
+  probe <- function(target, token = NULL) {
+    h <- curl::new_handle()
+    if (!is.null(token)) {
+      curl::handle_setheaders(h, "X-Zeroserve-Token" = token)
+    }
+    curl::curl_fetch_memory(target, handle = h)
+  }
+
+  targets <- sprintf(
+    "http://127.0.0.1:%s/__zs__/%s",
+    port,
+    c("ping", "list", "clear", "register", "no_such_endpoint")
+  )
+  for (target in targets) {
+    for (tok in list(NULL, strrep("0", 32L), "", "not a token")) {
+      res_probe <- probe(target, tok)
+      expect_uniform_404(res_probe)
+      expect_equal(res_probe$status_code, res_unknown$status_code)
+      expect_equal(
+        rawToChar(res_probe$content),
+        rawToChar(res_unknown$content)
+      )
+    }
+  }
+
+  # The authenticated control plane still works, and still 404s an unknown
+  # endpoint rather than erroring differently.
+  expect_equal(zeroserve:::.send_ipc("/ping")$status, "alive")
+  expect_true("/test_ctrl_probe.txt" %in% names(zeroserve:::.send_ipc("/list")))
+  expect_error(zeroserve:::.send_ipc("/no_such_endpoint"), "404")
+})

@@ -48,12 +48,15 @@
   success while every served URL stayed live. It is the documented way to
   revoke a URL, so it must not silently no-op.
 
-* Scope note on the preflight gate: it closes cross-origin fingerprinting,
-  which is the threat the capability token addresses. An unauthenticated
-  request to a control-plane path still answers `403` rather than the uniform
-  404, so a process that can already open loopback sockets can still tell that
-  a zeroserve server is listening. A browser page cannot: that 403 carries no
-  CORS headers, so it is unreadable cross-origin.
+* The control plane no longer answers an unauthenticated request with a
+  distinct `403 Forbidden`. A fixed, guessable path that responded differently
+  from every other path identified a zeroserve instance on the first probe,
+  which undid for a plain `GET` what gating the `OPTIONS` preflight bought. A
+  request to `/__zs__/...` with a missing or wrong `X-Zeroserve-Token` now gets
+  the same uniform 404 as an unknown path, which is also what an unknown
+  control endpoint already returned to an authenticated caller. Every response
+  the server gives an unauthenticated client is now byte-identical, whatever
+  the path or method.
 
 * Served URLs are now correct for remote R sessions. On RStudio Server and Posit
   Workbench the URL is translated through the proxy with
