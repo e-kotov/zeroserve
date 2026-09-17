@@ -42,7 +42,7 @@ nc <- sf::st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
 
 # Serve it!
 url <- zs_serve_arrow(nc)
-# [1] "http://127.0.0.1:8080/stream.arrow"
+# [1] "http://127.0.0.1:8080/6b1f0a3c9d24e7815f0b2a6c47d3e908/stream.arrow"
 ```
 
 DuckSpatial queries can use their native GeoArrow stream. This prepares the data for fast browser rendering and avoids a data attachment file:
@@ -80,10 +80,29 @@ selected <- countries |>
 
 # DuckDB writes GeoParquet directly; zeroserve hosts the file with HTTP ranges.
 url <- zs_serve_parquet(selected, layer_id = "countries")
-# [1] "http://127.0.0.1:8080/countries.parquet"
+# [1] "http://127.0.0.1:8080/6b1f0a3c9d24e7815f0b2a6c47d3e908/countries.parquet"
 ```
 
 The browser must decode the WKB geometry before rendering. Use `zs_serve_arrow()` instead when time to first map render matters more than server-side preparation time. `zs_serve_parquet()` also accepts a DuckDB connection plus a table name or SQL query.
+
+### Remote R sessions
+
+The returned URL points at `127.0.0.1` by default, which only works when the
+browser runs on the same machine as R. On RStudio Server and Posit Workbench the
+URL is translated through the proxy automatically. Elsewhere -- Posit Connect,
+containers, reverse proxies or SSH port forwarding -- set the base URL the
+browser should use:
+
+``` r
+options(zeroserve.base_url = "https://analysis.example.org/zeroserve")
+```
+
+Served URLs also carry an unguessable token as their first path segment, so that
+other pages in the same browser cannot read the data. The token is per resource,
+so a leaked URL exposes at most that one resource, and it is revoked by
+`zs_clear_registry()`, by `zs_stop_server()`, or by serving the same `layer_id`
+again. Treat it as a secret: it is a credential in a URL. Always pass the URL returned by `zs_serve_*()` around instead of
+rebuilding it by hand. See `?"zeroserve-options"`.
 
 ## How it works
 

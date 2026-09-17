@@ -157,6 +157,8 @@ zs_server_logs(n = 10)
 
 `zeroserve` is designed to work seamlessly with modern web browsers. It includes built-in support for **CORS (Cross-Origin Resource Sharing)**, including `OPTIONS` preflight requests. This means you can point tools like [Deck.gl](https://deck.gl/) or [geoarrow-js](https://github.com/geoarrow/geoarrow-js) directly at the `zeroserve` URL without needing an intermediate proxy.
 
+CORS is scoped to the URL you were actually given. Every served URL carries a per-resource capability token as its first path segment, and both the `GET` and the `OPTIONS` preflight succeed only for a URL that resolves to a registered resource: the preflight of a token-less or unknown URL is refused with the same opaque 404 as the request itself, carrying no `Access-Control-*` headers at all. So pass the URL returned by `zs_serve_*()` to the browser verbatim rather than rebuilding it by hand. Served responses also carry `Referrer-Policy: no-referrer`, though only as defence in depth: that header governs requests originating from a served response, not from the page embedding it, so whether the token leaks in a `Referer` header is still the embedding page's decision. The token is a secret in a URL -- do not publish it.
+
 ## Next Steps
 
 For more information, please refer to the function documentation.

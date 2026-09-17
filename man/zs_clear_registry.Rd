@@ -7,11 +7,13 @@
 zs_clear_registry()
 }
 \value{
-Logical; TRUE if registry was cleared.
+Logical; \code{TRUE} if the registry was cleared. \code{FALSE}, with a
+warning, when the background server is running but could not be reached
+to clear it: the served URLs are then still live.
 }
 \description{
 This stops serving all currently registered resources and frees
-associated memory buffers.
+associated memory buffers, which revokes every URL handed out so far.
 }
 \examples{
 \dontrun{
