@@ -35,9 +35,25 @@
   `Not Found`. The former `File Not Found` response for a resource whose backing
   file has been deleted, and the 404 for an unrecognised resource type, no
   longer differ in body or carry a wildcard CORS header; a missing backing file
-  is recorded in the server log (`zs_server_logs()`) instead. Successful data
-  responses carry `Referrer-Policy: no-referrer`, so the token in the path is
-  not forwarded to a third-party origin in a `Referer` header.
+  is recorded in the server log (`zs_server_logs()`) instead, once per backing
+  file rather than once per request. Successful data responses carry
+  `Referrer-Policy: no-referrer` as defence in depth. Note what that header
+  can and cannot do: it governs requests originating from a served response,
+  not from the page embedding it, so whether a tokenised URL leaks in a
+  `Referer` is still decided by the embedding page's own policy. Treat the URL
+  as the secret it is and do not publish it.
+
+* `zs_clear_registry()` now returns `FALSE` with a warning when the background
+  server is running but could not be reached to clear it, instead of reporting
+  success while every served URL stayed live. It is the documented way to
+  revoke a URL, so it must not silently no-op.
+
+* Scope note on the preflight gate: it closes cross-origin fingerprinting,
+  which is the threat the capability token addresses. An unauthenticated
+  request to a control-plane path still answers `403` rather than the uniform
+  404, so a process that can already open loopback sockets can still tell that
+  a zeroserve server is listening. A browser page cannot: that 403 carries no
+  CORS headers, so it is unreadable cross-origin.
 
 * Served URLs are now correct for remote R sessions. On RStudio Server and Posit
   Workbench the URL is translated through the proxy with

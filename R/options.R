@@ -40,10 +40,14 @@
 #' A request with a missing, malformed or mismatched token receives a 404 that
 #' is byte-identical to the one for an unknown path and carries no CORS headers,
 #' so the endpoint reveals neither which tokens nor which resources exist. The
-#' `OPTIONS` preflight is gated the same way, and served responses carry
-#' `Referrer-Policy: no-referrer` so the token is not handed to a third-party
-#' origin in a `Referer` header. Always use the URL returned by the
-#' `zs_serve_*()` functions rather than constructing one by hand.
+#' `OPTIONS` preflight is gated the same way.
+#'
+#' Served responses carry `Referrer-Policy: no-referrer`, but only as defence
+#' in depth: that header governs requests originating from a served response,
+#' not from the page embedding it, so whether a tokenised URL leaks in a
+#' `Referer` header remains the embedding page's decision. The token is a
+#' secret in a URL. Always use the URL returned by the `zs_serve_*()` functions
+#' rather than constructing one by hand, and do not publish it.
 #'
 #' @examples
 #' # A container that publishes the server port on a known host name:

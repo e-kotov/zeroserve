@@ -163,6 +163,12 @@ start_server <- function() {
             body = "Not Found"
           )
 
+          # Backing files that have gone missing, so that the log line below
+          # is written once per file rather than once per request: a saved
+          # widget retrying a fetch would otherwise grow the log without
+          # bound on the single-threaded event loop.
+          missing_logged <- new.env(parent = emptyenv())
+
           # Resolve a data-plane path to its resource, or NULL.
           #
           # Served URLs are "/<32 hex>/<registered path>", where the first
@@ -179,8 +185,10 @@ start_server <- function() {
             # string signals an error.
             bytes <- charToRaw(path)
 
-            # "/" + 32 hex + "/" + at least one character.
-            if (length(bytes) < 35L) {
+            # "/" + 32 hex + "/", where that last "/" already begins the
+            # registered path: a path of exactly "/" is 34 bytes and must stay
+            # reachable, so the guard is 34 and not 35.
+            if (length(bytes) < 34L) {
               return(NULL)
             }
             codes <- as.integer(bytes)
@@ -332,23 +340,29 @@ start_server <- function() {
 
                 tryCatch(
                   {
-                    # Helper for data requests (to be hardened in next tier)
-                    if (resource$type == "file") {
+                    # Helper for data requests (to be hardened in next tier).
+                    # identical() rather than ==: a record with a missing or
+                    # malformed `type` must fall through to the uniform 404,
+                    # not raise "argument is of length zero" and answer 500.
+                    if (identical(resource$type, "file")) {
                       if (!file.exists(resource$path)) {
                         # Kept off the wire, on purpose: the response has to be
                         # byte-identical to every other rejection. The log is
                         # where this case is debuggable.
                         # Never log `path`: it carries the capability token,
                         # and logs get pasted into bug reports.
-                        write(
-                          sprintf(
-                            "[%s] Backing file gone: %s",
-                            Sys.time(),
-                            resource$path
-                          ),
-                          log_file,
-                          append = TRUE
-                        )
+                        if (!exists(resource$path, envir = missing_logged)) {
+                          assign(resource$path, TRUE, envir = missing_logged)
+                          write(
+                            sprintf(
+                              "[%s] Backing file gone: %s",
+                              Sys.time(),
+                              resource$path
+                            ),
+                            log_file,
+                            append = TRUE
+                          )
+                        }
                         return(not_found)
                       }
                       file_size <- file.info(resource$path)$size
@@ -492,7 +506,7 @@ start_server <- function() {
                           body = chunk
                         ))
                       }
-                    } else if (resource$type == "mori") {
+                    } else if (identical(resource$type, "mori")) {
                       mapped_buf <- mori::map_shared(resource$shm_name)
                       return(list(
                         status = 200L,
@@ -673,8 +687,10 @@ start_server <- function() {
     body = "Not Found"
   )
 
-  if (resource$type == "file") {
+  if (identical(resource$type, "file")) {
     if (!file.exists(resource$path)) {
+      # The inline handler writes this once per backing file rather than once
+      # per request; here there is no event loop to protect.
       write(
         sprintf("[%s] Backing file gone: %s", Sys.time(), resource$path),
         log_file,
@@ -812,7 +828,7 @@ start_server <- function() {
         body = chunk
       ))
     }
-  } else if (resource$type == "mori") {
+  } else if (identical(resource$type, "mori")) {
     # map buffer using mori
     mapped_buf <- mori::map_shared(resource$shm_name)
     return(list(
@@ -914,9 +930,11 @@ zs_stop_server <- function() {
 #' Clear the zeroserve resource registry
 #'
 #' This stops serving all currently registered resources and frees
-#' associated memory buffers.
+#' associated memory buffers, which revokes every URL handed out so far.
 #'
-#' @return Logical; TRUE if registry was cleared.
+#' @return Logical; `TRUE` if the registry was cleared. `FALSE`, with a
+#'   warning, when the background server is running but could not be reached
+#'   to clear it: the served URLs are then still live.
 #' @export
 #'
 #' @examples
@@ -933,9 +951,24 @@ zs_clear_registry <- function() {
     .zeroserve_env$temp_files <- character(0)
   }
 
-  # Tell the background server to clear its in-memory registry
+  # Tell the background server to clear its in-memory registry. This is the
+  # documented way to revoke a URL, so a request that never landed -- the
+  # event loop is single-threaded and .send_ipc() times out after 5s -- must
+  # not be reported as a successful revocation.
   if (zs_server_status()) {
-    tryCatch(.send_ipc("/clear"), error = function(e) NULL)
+    cleared <- tryCatch(
+      !is.null(.send_ipc("/clear")),
+      error = function(e) FALSE
+    )
+    if (!isTRUE(cleared)) {
+      warning(
+        "Could not reach the background server to clear its registry: the ",
+        "URLs served so far may still be live. Use zs_stop_server() to ",
+        "revoke them unconditionally.",
+        call. = FALSE
+      )
+      return(FALSE)
+    }
   }
 
   return(TRUE)

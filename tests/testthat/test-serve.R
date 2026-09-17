@@ -973,3 +973,83 @@ test_that("a missing backing file gets the uniform 404 and a log line", {
   expect_match(logs, "Backing file gone", fixed = TRUE)
   expect_false(grepl(zs_token(url), logs, fixed = TRUE))
 })
+
+test_that("a one-byte registered path is still reachable", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+
+  # Regression guard: an extension-less file served under an empty layer_id
+  # registers the path "/", which makes the request path exactly 34 bytes. A
+  # 35-byte minimum in the token parse made that URL dead on arrival.
+  dir_f <- tempfile()
+  dir.create(dir_f)
+  temp_f <- file.path(dir_f, "noext")
+  writeBin(charToRaw("root path"), temp_f)
+
+  url <- zs_serve_file(temp_f, layer_id = "")
+  res <- curl::curl_fetch_memory(url)
+
+  expect_equal(res$status_code, 200L)
+  expect_equal(rawToChar(res$content), "root path")
+
+  # Still gated on the token, and still not an oracle.
+  expect_uniform_404(curl::curl_fetch_memory(sub(
+    zs_token(url),
+    strrep("e", 32L),
+    url,
+    fixed = TRUE
+  )))
+})
+
+test_that("a malformed resource record gets the uniform 404, not a 500", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+
+  temp_f <- tempfile(fileext = ".txt")
+  writeBin(charToRaw("anchor"), temp_f)
+  anchor <- zs_serve_file(temp_f, layer_id = "test_bad_record")
+  token <- zs_token(anchor)
+
+  # Registered over the authenticated control plane, so this is reachable only
+  # post-auth -- but the type dispatch must still not raise "argument is of
+  # length zero" and answer 500, which would make the data plane an oracle for
+  # anything registered without a usable type.
+  for (bad in list(list(token = token), list(type = "not_a_type", token = token))) {
+    zeroserve:::.send_ipc(
+      "/register",
+      list(path = "/test_bad_record.txt", resource = bad)
+    )
+    expect_uniform_404(curl::curl_fetch_memory(sprintf(
+      "http://127.0.0.1:%s/%s/test_bad_record.txt",
+      .zeroserve_env$port,
+      token
+    )))
+  }
+})
+
+test_that("a missing backing file is logged once, not once per request", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("curl")
+
+  temp_f <- tempfile(fileext = ".txt")
+  writeBin(charToRaw("vanishing"), temp_f)
+  url <- zs_serve_file(temp_f, layer_id = "test_log_once")
+  expect_equal(curl::curl_fetch_memory(url)$status_code, 200L)
+
+  # zs_serve_file() registers the normalized path, which is what gets logged.
+  served_path <- normalizePath(temp_f)
+  unlink(temp_f)
+  for (i in 1:5) {
+    expect_equal(curl::curl_fetch_memory(url)$status_code, 404L)
+  }
+
+  # Otherwise a saved widget retrying a fetch grows the log without bound.
+  # Counted for this backing file only: the log is shared with every other
+  # test running against the same server generation.
+  hits <- grepl(
+    sprintf("Backing file gone: %s", served_path),
+    zs_server_logs(200),
+    fixed = TRUE
+  )
+  expect_equal(sum(hits), 1L)
+})
